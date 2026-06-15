@@ -28,18 +28,19 @@ function styleKeyOf(s: Shape): string {
   return `${s.kind}|${s.w}|${s.h}|${s.fill}|${s.stroke}|${s.icon ?? ""}|${s.src ?? ""}`;
 }
 function textKeyOf(s: Shape): string {
-  return `${s.kind}|${s.text}|${s.w}|${s.fill}`;
+  return `${s.kind}|${s.text}|${s.w}|${s.fill}|${s.fontSize ?? ""}`;
 }
 
 function textStyle(s: Shape): TextStyleOptions {
   if (s.kind === "text") {
+    const fontSize = s.fontSize ?? TEXT_FONT_SIZE;
     return {
       fontFamily: FONT,
-      fontSize: TEXT_FONT_SIZE,
+      fontSize,
       fontWeight: "600",
       fill: hexToNumber(s.fill),
       align: "left",
-      lineHeight: TEXT_FONT_SIZE * 1.3,
+      lineHeight: fontSize * 1.3,
     };
   }
   return {

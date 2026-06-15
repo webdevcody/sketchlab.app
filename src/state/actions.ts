@@ -93,7 +93,7 @@ export function setShapeText(id: ID, text: string): void {
   if (!s) return;
   s.text = text;
   if (s.kind === "text") {
-    const box = measureTextBox(text);
+    const box = measureTextBox(text, s.fontSize);
     s.w = box.w;
     s.h = box.h;
   }
@@ -122,11 +122,8 @@ export function edgesConnectedTo(id: ID): Edge[] {
 
 export function createEdge(from: ID, to: ID, directed = false): Edge | null {
   if (from === to) return null;
-  // avoid an identical edge in the same direction (reverse is allowed for digraphs)
-  const exists = Object.values(doc.board.edges).some(
-    (e) => e.from === from && e.to === to && !!e.directed === directed,
-  );
-  if (exists) return null;
+  // parallel edges are allowed — they auto-fan so you can draw, e.g., a request
+  // arrow and a response arrow between the same two services.
   const edge: Edge = {
     id: uid(),
     from,

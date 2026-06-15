@@ -1,4 +1,4 @@
-import type { Shape } from "../state/types";
+import type { Edge, ID, Shape } from "../state/types";
 
 export interface Pt {
   x: number;
@@ -87,20 +87,86 @@ export interface EdgeGeometry {
   mid: Pt;
 }
 
-export function edgeGeometry(
-  from: Shape,
-  to: Shape,
-  cx: number | undefined,
-  cy: number | undefined,
-): EdgeGeometry {
-  const hasCtrl = cx !== undefined && cy !== undefined;
-  const ctrl = hasCtrl ? { x: cx as number, y: cy as number } : null;
+export function edgeGeometry(from: Shape, to: Shape, ctrl: Pt | null): EdgeGeometry {
   const targetA = ctrl ?? center(to);
   const targetB = ctrl ?? center(from);
   const p1 = boundaryPoint(from, targetA);
   const p2 = boundaryPoint(to, targetB);
   const mid = ctrl ?? { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
   return { p1, p2, ctrl, mid };
+}
+
+/** world-space lateral spacing between adjacent parallel edges at their apex */
+const LANE_GAP = 28;
+
+/** All edges connecting the same unordered pair of shapes as `edge` (incl. itself). */
+export function pairSiblings(edges: Record<ID, Edge>, edge: Edge): Edge[] {
+  const a = edge.from;
+  const b = edge.to;
+  const out: Edge[] = [];
+  for (const e of Object.values(edges)) {
+    if ((e.from === a && e.to === b) || (e.from === b && e.to === a)) out.push(e);
+  }
+  return out;
+}
+
+/**
+ * Auto control point so parallel edges fan out instead of stacking. Returns null
+ * for a lone edge (and the first edge of a pair), which stay straight. Edges rank
+ * by creation order — `siblings` arrives in board insertion order — and stack
+ * cumulatively to one side: the first line stays on top and each newly added line
+ * sits strictly below the previous ones, never above them. The offset side is
+ * forced "down" the screen (to the right for vertical edges) and is shared by all
+ * siblings (both directions), so the stack stays consistent.
+ */
+function autoControl(edge: Edge, from: Shape, to: Shape, siblings: Edge[]): Pt | null {
+  if (siblings.length <= 1) return null;
+  const rank = siblings.findIndex((e) => e.id === edge.id);
+  if (rank <= 0) return null; // first-created edge stays straight; others stack below
+
+  const firstIsFrom = edge.from < edge.to;
+  const ca = center(firstIsFrom ? from : to);
+  const cb = center(firstIsFrom ? to : from);
+  const dx = cb.x - ca.x;
+  const dy = cb.y - ca.y;
+  const len = Math.hypot(dx, dy) || 1;
+  let px = -dy / len;
+  let py = dx / len;
+  if (py < 0 || (py === 0 && px < 0)) {
+    px = -px;
+    py = -py;
+  }
+  const mx = (ca.x + cb.x) / 2;
+  const my = (ca.y + cb.y) / 2;
+  // control offset is ~2× the apex offset for a quadratic bezier
+  const off = 2 * rank * LANE_GAP;
+  return { x: mx + px * off, y: my + py * off };
+}
+
+/**
+ * Geometry for an edge honoring (a) a manual bend (edge.cx/cy) or (b) the auto
+ * parallel-edge fan. For auto-curves the label/handle anchor (`mid`) sits on the
+ * curve apex rather than at the control point.
+ */
+export function resolveEdgeGeometry(
+  edges: Record<ID, Edge>,
+  edge: Edge,
+  from: Shape,
+  to: Shape,
+): EdgeGeometry {
+  if (edge.cx !== undefined && edge.cy !== undefined) {
+    return edgeGeometry(from, to, { x: edge.cx, y: edge.cy });
+  }
+  const ctrl = autoControl(edge, from, to, pairSiblings(edges, edge));
+  if (!ctrl) return edgeGeometry(from, to, null);
+  const geo = edgeGeometry(from, to, ctrl);
+  return {
+    ...geo,
+    mid: {
+      x: 0.25 * geo.p1.x + 0.5 * ctrl.x + 0.25 * geo.p2.x,
+      y: 0.25 * geo.p1.y + 0.5 * ctrl.y + 0.25 * geo.p2.y,
+    },
+  };
 }
 
 export function hexToNumber(hex: string): number {

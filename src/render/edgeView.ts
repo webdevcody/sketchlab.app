@@ -1,5 +1,5 @@
 import { Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
-import type { Edge } from "../state/types";
+import type { Edge, ID } from "../state/types";
 import { type EdgeGeometry, hexToNumber } from "./geometry";
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
@@ -8,6 +8,9 @@ export interface EdgeView {
   container: Container;
   gfx: Graphics;
   label: Text | null;
+  /** endpoints, retained so the scene can re-fan siblings on removal */
+  from: ID;
+  to: ID;
 }
 
 function labelStyle(): TextStyleOptions {
@@ -19,11 +22,11 @@ function labelStyle(): TextStyleOptions {
   };
 }
 
-export function createEdgeView(): EdgeView {
+export function createEdgeView(from: ID, to: ID): EdgeView {
   const container = new Container();
   const gfx = new Graphics();
   container.addChild(gfx);
-  return { container, gfx, label: null };
+  return { container, gfx, label: null, from, to };
 }
 
 export function updateEdgeView(

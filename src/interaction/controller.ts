@@ -1,10 +1,10 @@
 import type { Graphics } from "pixi.js";
 import {
   boundaryPoint,
-  edgeGeometry,
   type Pt,
   quadPoints,
   readableText,
+  resolveEdgeGeometry,
 } from "../render/geometry";
 import { scene } from "../render/scene";
 import * as actions from "../state/actions";
@@ -20,7 +20,7 @@ import {
   setSelection,
 } from "../state/store";
 import type { ID, Shape } from "../state/types";
-import { TEXT_FONT_SIZE, TEXT_PAD } from "../render/measure";
+import { measureTextBox, TEXT_FONT_SIZE, TEXT_PAD } from "../render/measure";
 import { panBy, zoomAt } from "./camera";
 import { IconPalette } from "./iconPalette";
 import { TextEditor } from "./textEditor";
@@ -32,6 +32,8 @@ const HANDLE = 9;
 const EDGE_HANDLE_R = 6;
 const MOVE_THRESHOLD = 3;
 const MIN_SIZE = 16;
+const MIN_FONT = 8;
+const MAX_FONT = 400;
 
 // handle indices: 0 tl, 1 top, 2 tr, 3 right, 4 br, 5 bottom, 6 bl, 7 left
 const RESIZE_CURSORS = [
@@ -171,9 +173,8 @@ export class Controller {
     ];
   }
 
-  /** Index of the resize handle under a screen point, or -1. Text objects auto-size. */
+  /** Index of the resize handle under a screen point, or -1. */
   private hitHandle(s: Shape, p: Pt): number {
-    if (s.kind === "text") return -1;
     const pts = this.handlePoints(s);
     for (let i = 0; i < 8; i++) {
       if (Math.abs(p.x - pts[i].x) <= HANDLE && Math.abs(p.y - pts[i].y) <= HANDLE) return i;
@@ -245,7 +246,7 @@ export class Controller {
       const from = doc.board.shapes[e2.from];
       const to = doc.board.shapes[e2.to];
       if (!from || !to) continue;
-      const mid = edgeGeometry(from, to, e2.cx, e2.cy).mid;
+      const mid = resolveEdgeGeometry(doc.board.edges, e2, from, to).mid;
       const ms = worldToScreen(mid.x, mid.y);
       if (Math.hypot(p.x - ms.x, p.y - ms.y) <= EDGE_HANDLE_R + 4) {
         this.gesture = { kind: "edgeCtrl", id: eid };
@@ -329,9 +330,12 @@ export class Controller {
       case "edgeCtrl":
         actions.updateEdge(g.id, { cx: world.x, cy: world.y });
         break;
-      case "resize":
-        this.applyResize(g.id, g.handle, g.aspect, world);
+      case "resize": {
+        const rs = doc.board.shapes[g.id];
+        if (rs?.kind === "text") this.applyTextResize(g.id, g.handle, world);
+        else this.applyResize(g.id, g.handle, g.aspect, world);
         break;
+      }
     }
   };
 
@@ -445,6 +449,52 @@ export class Controller {
     }
 
     actions.updateShape(id, { x: nx, y: ny, w: nw, h: nh });
+  }
+
+  /**
+   * Resize a text object by scaling its font size. Text boxes are content-sized,
+   * so dragging a handle scales the font (the box re-measures to fit) while the
+   * side opposite the dragged handle stays pinned.
+   */
+  private applyTextResize(id: ID, handle: number, world: Pt): void {
+    const s = doc.board.shapes[id];
+    if (!s) return;
+    const left = s.x;
+    const top = s.y;
+    const right = s.x + s.w;
+    const bottom = s.y + s.h;
+    const cx = s.x + s.w / 2;
+    const cy = s.y + s.h / 2;
+    const curFont = s.fontSize ?? TEXT_FONT_SIZE;
+
+    // scale factor from the drag, relative to the current box (≈ proportional to font)
+    let k: number;
+    if (handle % 2 === 0) {
+      const fx = handle === 0 || handle === 6 ? right : left;
+      const fy = handle === 0 || handle === 2 ? bottom : top;
+      k = Math.max(Math.abs(world.y - fy) / s.h, Math.abs(world.x - fx) / s.w);
+    } else if (handle === 1 || handle === 5) {
+      const fy = handle === 1 ? bottom : top;
+      k = Math.abs(world.y - fy) / s.h;
+    } else {
+      const fx = handle === 7 ? right : left;
+      k = Math.abs(world.x - fx) / s.w;
+    }
+
+    const nf = Math.min(MAX_FONT, Math.max(MIN_FONT, curFont * k));
+    const box = measureTextBox(s.text, nf);
+
+    // pin the side opposite the dragged handle
+    let nx: number;
+    if (handle === 0 || handle === 6 || handle === 7) nx = right - box.w;
+    else if (handle === 2 || handle === 3 || handle === 4) nx = left;
+    else nx = cx - box.w / 2;
+    let ny: number;
+    if (handle === 0 || handle === 1 || handle === 2) ny = bottom - box.h;
+    else if (handle === 4 || handle === 5 || handle === 6) ny = top;
+    else ny = cy - box.h / 2;
+
+    actions.updateShape(id, { fontSize: nf, x: nx, y: ny, w: box.w, h: box.h });
   }
 
   private onWheel = (e: WheelEvent): void => {
@@ -588,7 +638,7 @@ export class Controller {
         value,
         color: s.fill,
         background: "rgba(11,18,32,0.85)",
-        fontSize: TEXT_FONT_SIZE * zoom,
+        fontSize: (s.fontSize ?? TEXT_FONT_SIZE) * zoom,
         align: "left",
         autoGrow: true,
         padding: TEXT_PAD * zoom,
@@ -629,7 +679,7 @@ export class Controller {
     setSelection([], [id]);
     this.editOriginal = edge.label;
     const value = seed ? edge.label + seed : edge.label;
-    const mid = edgeGeometry(from, to, edge.cx, edge.cy).mid;
+    const mid = resolveEdgeGeometry(doc.board.edges, edge, from, to).mid;
     const ms = worldToScreen(mid.x, mid.y);
     const w = 160;
     this.textEditor.open({
@@ -744,7 +794,7 @@ export class Controller {
     }
 
     const single = this.singleSelectedShape();
-    if (single && single.kind !== "text") {
+    if (single) {
       for (const c of this.handlePoints(single)) {
         g.rect(c.x - HANDLE / 2, c.y - HANDLE / 2, HANDLE, HANDLE);
         g.fill(0x0b1220);
@@ -758,7 +808,7 @@ export class Controller {
       const from = doc.board.shapes[e.from];
       const to = doc.board.shapes[e.to];
       if (!from || !to) continue;
-      const geo = edgeGeometry(from, to, e.cx, e.cy);
+      const geo = resolveEdgeGeometry(doc.board.edges, e, from, to);
       const pts = geo.ctrl ? quadPoints(geo.p1, geo.ctrl, geo.p2, 16) : [geo.p1, geo.p2];
       const s0 = worldToScreen(pts[0].x, pts[0].y);
       g.moveTo(s0.x, s0.y);

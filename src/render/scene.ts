@@ -4,10 +4,10 @@ import type { ID } from "../state/types";
 import {
   type Pt,
   distToSegment,
-  edgeGeometry,
   pointInShape,
   quadPoints,
   rectIntersectsShape,
+  resolveEdgeGeometry,
 } from "./geometry";
 import { createEdgeView, type EdgeView, updateEdgeView } from "./edgeView";
 import { createNodeView, type NodeView, updateNodeView } from "./shapeView";
@@ -124,11 +124,12 @@ class Scene {
   addEdge(id: ID): void {
     const e = doc.board.edges[id];
     if (!e) return;
-    const view = createEdgeView();
+    const view = createEdgeView(e.from, e.to);
     this.edgeViews.set(id, view);
     this.edgeLayer.addChild(view.container);
     this.registerAdj(id, e.from, e.to);
-    this.refreshEdge(id);
+    // a new parallel edge changes how its siblings fan, so refresh them too
+    for (const sid of this.pairEdges(e.from, e.to)) this.refreshEdge(sid);
     this.requestRender();
   }
 
@@ -142,13 +143,28 @@ class Scene {
 
   removeEdge(id: ID): void {
     const view = this.edgeViews.get(id);
+    const from = view?.from;
+    const to = view?.to;
     if (view) {
       this.edgeLayer.removeChild(view.container);
       view.container.destroy({ children: true });
       this.edgeViews.delete(id);
     }
     for (const set of this.nodeEdges.values()) set.delete(id);
+    // the remaining siblings re-fan now that this one is gone
+    if (from && to) for (const sid of this.pairEdges(from, to)) this.refreshEdge(sid);
     this.requestRender();
+  }
+
+  /** Edge ids connecting both `a` and `b` (parallel edges of one pair). */
+  private pairEdges(a: ID, b: ID): ID[] {
+    const sa = this.nodeEdges.get(a);
+    const sb = this.nodeEdges.get(b);
+    if (!sa || !sb) return [];
+    const [small, big] = sa.size <= sb.size ? [sa, sb] : [sb, sa];
+    const out: ID[] = [];
+    for (const id of small) if (big.has(id)) out.push(id);
+    return out;
   }
 
   private registerAdj(edgeId: ID, from: ID, to: ID): void {
@@ -169,7 +185,7 @@ class Scene {
     const from = doc.board.shapes[e.from];
     const to = doc.board.shapes[e.to];
     if (!from || !to) return;
-    updateEdgeView(view, e, edgeGeometry(from, to, e.cx, e.cy));
+    updateEdgeView(view, e, resolveEdgeGeometry(doc.board.edges, e, from, to));
   }
 
   // ---- bulk ----
@@ -207,7 +223,7 @@ class Scene {
       const from = doc.board.shapes[e.from];
       const to = doc.board.shapes[e.to];
       if (!from || !to) continue;
-      const geo = edgeGeometry(from, to, e.cx, e.cy);
+      const geo = resolveEdgeGeometry(doc.board.edges, e, from, to);
       const pts = geo.ctrl ? quadPoints(geo.p1, geo.ctrl, geo.p2, 14) : [geo.p1, geo.p2];
       for (let i = 0; i < pts.length - 1; i++) {
         const d = distToSegment(p, pts[i], pts[i + 1]);

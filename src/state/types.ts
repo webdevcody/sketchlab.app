@@ -17,6 +17,8 @@ export interface Shape {
   icon?: string;
   /** only for kind === "image": the image data URL (embedded so it persists & shares) */
   src?: string;
+  /** only for kind === "text": font size in world units (defaults to TEXT_FONT_SIZE) */
+  fontSize?: number;
 }
 
 export interface Edge {
