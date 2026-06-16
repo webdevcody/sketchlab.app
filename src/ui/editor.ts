@@ -1,5 +1,6 @@
 import { centerOrigin, fitToContent, getZoom, zoomBy } from "../interaction/camera";
 import { Controller } from "../interaction/controller";
+import { NO_FILL } from "../render/geometry";
 import { saveNow, startAutosave, stopAutosave } from "../persistence/autosave";
 import { saveBoard } from "../persistence/db";
 import { shareUrl } from "../persistence/share";
@@ -10,6 +11,7 @@ import { $camera, $selection, $style, $tool, doc } from "../state/store";
 import type { Board, Camera, ToolName } from "../state/types";
 import { clear, h, toast } from "./dom";
 import { navigate } from "./nav";
+import { createSwatchPicker } from "./swatchPicker";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -199,31 +201,25 @@ export async function mountEditor(
   );
 
   // ---- style panel ----
-  const fillInput = h("input", {
-    type: "color",
-    class: "swatch",
-    value: $style.get().fill,
+  const fillPicker = createSwatchPicker({
     title: "Fill / background color",
-  }) as HTMLInputElement;
-  const strokeInput = h("input", {
-    type: "color",
-    class: "swatch",
-    value: $style.get().stroke,
-    title: "Outline / line color",
-  }) as HTMLInputElement;
-
-  fillInput.addEventListener("input", () => {
-    const color = fillInput.value;
-    $style.set({ ...$style.get(), fill: color });
-    const sel = $selection.get();
-    if (sel.shapes.size) actions.setShapesStyle(sel.shapes, { fill: color });
+    initial: $style.get().fill,
+    transparent: true,
+    onPick: (color) => {
+      $style.set({ ...$style.get(), fill: color });
+      const sel = $selection.get();
+      if (sel.shapes.size) actions.setShapesStyle(sel.shapes, { fill: color });
+    },
   });
-  strokeInput.addEventListener("input", () => {
-    const color = strokeInput.value;
-    $style.set({ ...$style.get(), stroke: color });
-    const sel = $selection.get();
-    if (sel.shapes.size) actions.setShapesStyle(sel.shapes, { stroke: color });
-    for (const id of sel.edges) actions.updateEdge(id, { stroke: color });
+  const strokePicker = createSwatchPicker({
+    title: "Outline / line color",
+    initial: $style.get().stroke,
+    onPick: (color) => {
+      $style.set({ ...$style.get(), stroke: color });
+      const sel = $selection.get();
+      if (sel.shapes.size) actions.setShapesStyle(sel.shapes, { stroke: color });
+      for (const id of sel.edges) actions.updateEdge(id, { stroke: color });
+    },
   });
 
   const deleteBtn = h(
@@ -235,8 +231,8 @@ export async function mountEditor(
   const stylePanel = h(
     "div",
     { class: "style-panel" },
-    h("label", { class: "field" }, h("span", null, "Fill"), fillInput),
-    h("label", { class: "field" }, h("span", null, "Outline"), strokeInput),
+    h("div", { class: "field" }, h("span", null, "Fill"), fillPicker.el),
+    h("div", { class: "field" }, h("span", null, "Outline"), strokePicker.el),
     deleteBtn,
   );
 
@@ -245,14 +241,15 @@ export async function mountEditor(
     const firstShape = [...sel.shapes].map((id) => doc.board.shapes[id]).find(Boolean);
     const firstEdge = [...sel.edges].map((id) => doc.board.edges[id]).find(Boolean);
     if (firstShape) {
-      if (HEX.test(firstShape.fill)) fillInput.value = firstShape.fill;
-      if (HEX.test(firstShape.stroke)) strokeInput.value = firstShape.stroke;
+      if (HEX.test(firstShape.fill) || firstShape.fill === NO_FILL)
+        fillPicker.setValue(firstShape.fill);
+      if (HEX.test(firstShape.stroke)) strokePicker.setValue(firstShape.stroke);
     } else {
       const st = $style.get();
-      fillInput.value = st.fill;
-      strokeInput.value = st.stroke;
+      fillPicker.setValue(st.fill);
+      strokePicker.setValue(st.stroke);
     }
-    if (firstEdge && HEX.test(firstEdge.stroke)) strokeInput.value = firstEdge.stroke;
+    if (firstEdge && HEX.test(firstEdge.stroke)) strokePicker.setValue(firstEdge.stroke);
     const hasSel = sel.shapes.size > 0 || sel.edges.size > 0;
     deleteBtn.toggleAttribute("disabled", !hasSel);
     stylePanel.classList.toggle("style-panel--editing", hasSel);

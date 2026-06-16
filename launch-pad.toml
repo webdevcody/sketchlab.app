@@ -6,8 +6,8 @@ domainPattern = "{env}.sketchlab.webdevcody.com"
 [[service]]
 name = "web"
 dockerfile = "./Dockerfile"
-cpu = 256
-memory = 128
+cpu = 128
+memory = 32
 replicas = 1
 domain = "sketchlab.webdevcody.com" # change to your domain
 port = 80

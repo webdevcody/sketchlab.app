@@ -8,9 +8,9 @@ export interface EdgeView {
   container: Container;
   gfx: Graphics;
   label: Text | null;
-  /** endpoints, retained so the scene can re-fan siblings on removal */
-  from: ID;
-  to: ID;
+  /** shape endpoints (undefined for a free end), retained so the scene can re-fan siblings on removal */
+  from?: ID;
+  to?: ID;
 }
 
 function labelStyle(): TextStyleOptions {
@@ -22,7 +22,7 @@ function labelStyle(): TextStyleOptions {
   };
 }
 
-export function createEdgeView(from: ID, to: ID): EdgeView {
+export function createEdgeView(from: ID | undefined, to: ID | undefined): EdgeView {
   const container = new Container();
   const gfx = new Graphics();
   container.addChild(gfx);

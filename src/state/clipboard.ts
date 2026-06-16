@@ -25,7 +25,8 @@ export function copySelection(): void {
   const ids = new Set(shapes.map((s) => s.id));
   const edges: Edge[] = [];
   for (const e of Object.values(doc.board.edges)) {
-    const spanned = ids.has(e.from) && ids.has(e.to);
+    const spanned =
+      e.from !== undefined && e.to !== undefined && ids.has(e.from) && ids.has(e.to);
     if (sel.edges.has(e.id) || spanned) edges.push({ ...e });
   }
   if (!shapes.length && !edges.length) return;
@@ -60,22 +61,43 @@ export function pasteClipboard(): void {
 
   const newEdgeIds: string[] = [];
   for (const e of clipEdges) {
-    // an endpoint resolves to its pasted copy, or — for a standalone edge whose
-    // endpoints weren't copied — back onto the original shape if it still exists.
-    const fromCopied = idMap.has(e.from);
-    const toCopied = idMap.has(e.to);
-    const from = fromCopied ? idMap.get(e.from)! : doc.board.shapes[e.from] ? e.from : undefined;
-    const to = toCopied ? idMap.get(e.to)! : doc.board.shapes[e.to] ? e.to : undefined;
-    if (!from || !to) continue;
+    // resolve each end: a copied shape -> its copy; an uncopied shape -> the
+    // original if it still exists; a free end -> stays free. an anchored end
+    // whose shape is gone can't be placed, so the whole edge is skipped.
+    const fromCopied = e.from !== undefined && idMap.has(e.from);
+    const toCopied = e.to !== undefined && idMap.has(e.to);
+    let skip = false;
+    const resolveEnd = (id: string | undefined): string | undefined => {
+      if (id === undefined) return undefined;
+      if (idMap.has(id)) return idMap.get(id)!;
+      if (doc.board.shapes[id]) return id;
+      skip = true;
+      return undefined;
+    };
+    const from = resolveEnd(e.from);
+    const to = resolveEnd(e.to);
+    if (skip) continue;
+
     const nid = uid();
     const clone: Edge = { ...e, id: nid, from, to };
-    // only shift a manual bend when both endpoints also moved by d, so an edge
-    // re-attached to existing shapes keeps its shape relative to them.
-    if (fromCopied && toCopied) {
+    // free endpoints move with the pasted copy so it doesn't sit on the original
+    if (clone.from === undefined && clone.x1 !== undefined && clone.y1 !== undefined) {
+      clone.x1 += d;
+      clone.y1 += d;
+    }
+    if (clone.to === undefined && clone.x2 !== undefined && clone.y2 !== undefined) {
+      clone.x2 += d;
+      clone.y2 += d;
+    }
+    // shift a manual bend only when both of its endpoints moved with it (both
+    // copied, or free) — so an edge re-attached to existing shapes keeps its shape.
+    const bendMoves = (fromCopied || e.from === undefined) && (toCopied || e.to === undefined);
+    if (bendMoves) {
       if (clone.cx !== undefined) clone.cx += d;
       if (clone.cy !== undefined) clone.cy += d;
     }
     doc.board.edges[nid] = clone;
+    doc.board.order.push(nid);
     scene.addEdge(nid);
     newEdgeIds.push(nid);
   }

@@ -87,13 +87,39 @@ export interface EdgeGeometry {
   mid: Pt;
 }
 
-export function edgeGeometry(from: Shape, to: Shape, ctrl: Pt | null): EdgeGeometry {
-  const targetA = ctrl ?? center(to);
-  const targetB = ctrl ?? center(from);
-  const p1 = boundaryPoint(from, targetA);
-  const p2 = boundaryPoint(to, targetB);
+/** One end of an edge: a shape it anchors to, or a fixed world point. */
+type EdgeEnd = { shape: Shape; point?: undefined } | { shape?: undefined; point: Pt };
+
+/** The free point of an end, or the center of its shape — i.e. where it "aims from". */
+function endCenter(end: EdgeEnd): Pt {
+  return end.shape ? center(end.shape) : end.point;
+}
+
+/** The drawn endpoint: a shape's boundary toward `target`, or the fixed free point. */
+function endPoint(end: EdgeEnd, target: Pt): Pt {
+  return end.shape ? boundaryPoint(end.shape, target) : end.point;
+}
+
+export function edgeGeometry(from: EdgeEnd, to: EdgeEnd, ctrl: Pt | null): EdgeGeometry {
+  const targetA = ctrl ?? endCenter(to);
+  const targetB = ctrl ?? endCenter(from);
+  const p1 = endPoint(from, targetA);
+  const p2 = endPoint(to, targetB);
   const mid = ctrl ?? { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
   return { p1, p2, ctrl, mid };
+}
+
+/** Resolve an edge's two ends to shapes or fixed points, given the board's shapes. */
+function edgeEnds(shapes: Record<ID, Shape>, edge: Edge): { from: EdgeEnd; to: EdgeEnd } {
+  const resolve = (id: ID | undefined, fx: number | undefined, fy: number | undefined): EdgeEnd => {
+    const shape = id !== undefined ? shapes[id] : undefined;
+    if (shape) return { shape };
+    return { point: { x: fx ?? 0, y: fy ?? 0 } };
+  };
+  return {
+    from: resolve(edge.from, edge.x1, edge.y1),
+    to: resolve(edge.to, edge.x2, edge.y2),
+  };
 }
 
 /** world-space lateral spacing between adjacent parallel edges at their apex */
@@ -103,6 +129,8 @@ const LANE_GAP = 28;
 export function pairSiblings(edges: Record<ID, Edge>, edge: Edge): Edge[] {
   const a = edge.from;
   const b = edge.to;
+  // free / half-anchored edges have no shape pair to fan against
+  if (a === undefined || b === undefined) return [edge];
   const out: Edge[] = [];
   for (const e of Object.values(edges)) {
     if ((e.from === a && e.to === b) || (e.from === b && e.to === a)) out.push(e);
@@ -121,6 +149,7 @@ export function pairSiblings(edges: Record<ID, Edge>, edge: Edge): Edge[] {
  */
 function autoControl(edge: Edge, from: Shape, to: Shape, siblings: Edge[]): Pt | null {
   if (siblings.length <= 1) return null;
+  if (edge.from === undefined || edge.to === undefined) return null;
   const rank = siblings.findIndex((e) => e.id === edge.id);
   if (rank <= 0) return null; // first-created edge stays straight; others stack below
 
@@ -150,14 +179,18 @@ function autoControl(edge: Edge, from: Shape, to: Shape, siblings: Edge[]): Pt |
  */
 export function resolveEdgeGeometry(
   edges: Record<ID, Edge>,
+  shapes: Record<ID, Shape>,
   edge: Edge,
-  from: Shape,
-  to: Shape,
 ): EdgeGeometry {
+  const { from, to } = edgeEnds(shapes, edge);
   if (edge.cx !== undefined && edge.cy !== undefined) {
     return edgeGeometry(from, to, { x: edge.cx, y: edge.cy });
   }
-  const ctrl = autoControl(edge, from, to, pairSiblings(edges, edge));
+  // auto-fan only applies between two shapes; free edges stay straight
+  const ctrl =
+    from.shape && to.shape
+      ? autoControl(edge, from.shape, to.shape, pairSiblings(edges, edge))
+      : null;
   if (!ctrl) return edgeGeometry(from, to, null);
   const geo = edgeGeometry(from, to, ctrl);
   return {
@@ -168,6 +201,9 @@ export function resolveEdgeGeometry(
     },
   };
 }
+
+/** Sentinel `fill`/`stroke` value meaning "no paint" — the shape renders as outline only. */
+export const NO_FILL = "transparent";
 
 export function hexToNumber(hex: string): number {
   if (hex.startsWith("#")) hex = hex.slice(1);
@@ -182,6 +218,8 @@ export function hexToNumber(hex: string): number {
 
 /** Pick a readable text color (dark or light) for a given background hex. */
 export function readableText(bgHex: string): number {
+  // a transparent fill shows the dark canvas behind it, so labels read light
+  if (bgHex === NO_FILL) return 0xf1f5f9;
   const n = hexToNumber(bgHex);
   const r = (n >> 16) & 0xff;
   const g = (n >> 8) & 0xff;

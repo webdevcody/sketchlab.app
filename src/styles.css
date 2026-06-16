@@ -259,21 +259,69 @@ button {
   font-size: 12.5px;
   color: var(--muted);
 }
+.swatch-wrap {
+  position: relative;
+  display: inline-flex;
+}
 .swatch {
   width: 30px;
   height: 26px;
   padding: 0;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: none;
   cursor: pointer;
 }
-.swatch::-webkit-color-swatch {
-  border: none;
-  border-radius: 5px;
+.swatch.is-open {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
 }
-.swatch::-webkit-color-swatch-wrapper {
-  padding: 2px;
+
+/* "no fill" indicator: dark tile crossed by a red diagonal */
+.swatch--none {
+  background-color: var(--panel-solid);
+  background-image: linear-gradient(
+    to top right,
+    transparent calc(50% - 1.2px),
+    var(--danger) calc(50% - 1.2px),
+    var(--danger) calc(50% + 1.2px),
+    transparent calc(50% + 1.2px)
+  );
+}
+
+/* preset-color popover */
+.swatch-pop {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  padding: 10px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  z-index: 20;
+}
+.swatch-pop__chip {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition:
+    transform 0.08s ease,
+    box-shadow 0.08s ease;
+}
+.swatch-pop__chip:hover {
+  transform: scale(1.12);
+}
+.swatch-pop__chip.is-active {
+  box-shadow:
+    0 0 0 2px var(--panel-solid),
+    0 0 0 4px var(--accent);
 }
 
 .hint {
@@ -381,6 +429,44 @@ button {
   font-size: 11px;
   color: var(--muted);
   border-top: 1px solid var(--border);
+}
+
+/* ---------- right-click context menu ---------- */
+.ctx-menu {
+  position: absolute;
+  z-index: 70;
+  min-width: 184px;
+  padding: 5px;
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+}
+.ctx-menu__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.ctx-menu__item:hover:not(:disabled) {
+  background: rgba(56, 189, 248, 0.16);
+}
+.ctx-menu__item:disabled {
+  color: var(--muted);
+  cursor: default;
+}
+.ctx-menu__hint {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ---------- dashboard ---------- */

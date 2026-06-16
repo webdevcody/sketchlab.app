@@ -8,7 +8,7 @@ import {
   Texture,
 } from "pixi.js";
 import type { Shape, ShapeKind } from "../state/types";
-import { hexToNumber, readableText } from "./geometry";
+import { hexToNumber, NO_FILL, readableText } from "./geometry";
 import { drawIcon } from "./icons";
 import { TEXT_FONT_SIZE, TEXT_PAD } from "./measure";
 
@@ -54,7 +54,8 @@ function textStyle(s: Shape): TextStyleOptions {
       fontFamily: FONT,
       fontSize,
       fontWeight: "600",
-      fill: hexToNumber(s.fill),
+      // a text object's fill IS its glyph color; transparent would hide it, so fall back to light
+      fill: s.fill === NO_FILL ? 0xe2e8f0 : hexToNumber(s.fill),
       align: "left",
       lineHeight: fontSize * 1.3,
     };
@@ -121,15 +122,16 @@ export function updateNodeView(view: NodeView, s: Shape, onReady?: () => void): 
 
 function drawShape(g: Graphics, s: Shape): void {
   g.clear();
+  const transparent = s.fill === NO_FILL;
   const fill = hexToNumber(s.fill);
   const stroke = hexToNumber(s.stroke);
   if (s.kind === "rect") {
     g.roundRect(0, 0, s.w, s.h, Math.min(10, Math.min(s.w, s.h) * 0.12));
-    g.fill(fill);
+    if (!transparent) g.fill(fill);
     g.stroke({ width: 2, color: stroke, alignment: 0.5 });
   } else if (s.kind === "circle") {
     g.ellipse(s.w / 2, s.h / 2, s.w / 2, s.h / 2);
-    g.fill(fill);
+    if (!transparent) g.fill(fill);
     g.stroke({ width: 2, color: stroke, alignment: 0.5 });
   } else if (s.kind === "image") {
     // the Sprite supplies the pixels; gfx just draws the outline on top

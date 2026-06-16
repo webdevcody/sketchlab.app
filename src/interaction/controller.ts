@@ -23,6 +23,7 @@ import {
 import type { ID, Shape } from "../state/types";
 import { measureTextBox, TEXT_FONT_SIZE, TEXT_PAD } from "../render/measure";
 import { panBy, zoomAt } from "./camera";
+import { ContextMenu } from "./contextMenu";
 import { IconPalette } from "./iconPalette";
 import { TextEditor } from "./textEditor";
 import { screenToWorld, worldToScreen } from "./viewport";
@@ -51,11 +52,28 @@ const RESIZE_CURSORS = [
 type Gesture =
   | { kind: "none" }
   | { kind: "pan"; lastX: number; lastY: number }
-  | { kind: "create"; tool: "rect" | "circle"; sx: number; sy: number; cx: number; cy: number }
+  | {
+      kind: "create";
+      tool: "rect" | "circle";
+      sx: number;
+      sy: number;
+      cx: number;
+      cy: number;
+      square: boolean;
+    }
   | { kind: "marquee"; sx: number; sy: number; cx: number; cy: number; base: Set<ID> }
   | { kind: "move"; lastWX: number; lastWY: number; moved: boolean }
-  | { kind: "connect"; from: ID; px: number; py: number; directed: boolean }
+  | {
+      kind: "drawEdge";
+      fromId: ID | null;
+      sx: number;
+      sy: number;
+      px: number;
+      py: number;
+      directed: boolean;
+    }
   | { kind: "edgeCtrl"; id: ID }
+  | { kind: "edgeEnd"; id: ID; end: "from" | "to" }
   | { kind: "resize"; id: ID; handle: number; aspect: number };
 
 function numToCss(n: number): string {
@@ -80,17 +98,36 @@ function squareBox(sx: number, sy: number, cx: number, cy: number) {
   };
 }
 
+/**
+ * The draft box for a drag from (sx,sy) to (cx,cy). Free width/height by default;
+ * `square` locks it to a 1:1 box (used while shift is held).
+ */
+function dragBox(sx: number, sy: number, cx: number, cy: number, square: boolean) {
+  if (square) {
+    const { x, y, side } = squareBox(sx, sy, cx, cy);
+    return { x, y, w: side, h: side };
+  }
+  return {
+    x: Math.min(sx, cx),
+    y: Math.min(sy, cy),
+    w: Math.abs(cx - sx),
+    h: Math.abs(cy - sy),
+  };
+}
+
 export class Controller {
   private gesture: Gesture = { kind: "none" };
   private spaceDown = false;
   private textEditor: TextEditor;
   private palette: IconPalette;
+  private menu: ContextMenu;
   private editOriginal = "";
   private subs: Array<() => void> = [];
 
   constructor(private root: HTMLElement) {
     this.textEditor = new TextEditor(root);
     this.palette = new IconPalette(root, (key) => this.insertIcon(key));
+    this.menu = new ContextMenu(root);
 
     root.addEventListener("pointerdown", this.onPointerDown);
     root.addEventListener("pointermove", this.onPointerMove);
@@ -129,6 +166,7 @@ export class Controller {
     window.removeEventListener("drop", this.onWindowDrop);
     this.subs.forEach((u) => u());
     this.subs = [];
+    this.menu.close();
     scene.setOverlay(null);
   }
 
@@ -194,7 +232,27 @@ export class Controller {
     return doc.board.shapes[id] ?? null;
   }
 
-  private onContextMenu = (e: MouseEvent): void => e.preventDefault();
+  /**
+   * Right-click opens a z-order menu for the shape under the cursor. If that
+   * shape isn't already selected, select just it first (matches the usual
+   * "right-click targets what you clicked" behavior).
+   */
+  private onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault();
+    const p = this.local(e);
+    const world = screenToWorld(p.x, p.y);
+    const hit = scene.hitTestShape(world);
+    if (!hit) {
+      this.menu.close();
+      return;
+    }
+    if (!$selection.get().shapes.has(hit)) setSelection([hit], []);
+    const ids = [...$selection.get().shapes];
+    this.menu.open(e.clientX, e.clientY, [
+      { label: "Bring to Front", hint: "=", onSelect: () => actions.bringToFront(ids) },
+      { label: "Send to Back", hint: "-", onSelect: () => actions.sendToBack(ids) },
+    ]);
+  };
 
   // ---- pointer ----
   private onPointerDown = (e: PointerEvent): void => {
@@ -217,16 +275,23 @@ export class Controller {
     }
 
     if (tool === "rect" || tool === "circle") {
-      this.gesture = { kind: "create", tool, sx: p.x, sy: p.y, cx: p.x, cy: p.y };
+      this.gesture = { kind: "create", tool, sx: p.x, sy: p.y, cx: p.x, cy: p.y, square: e.shiftKey };
       scene.requestRender();
       return;
     }
 
     if (tool === "line" || tool === "arrow") {
-      const hit = scene.hitTestShape(world);
-      if (hit) {
-        this.gesture = { kind: "connect", from: hit, px: p.x, py: p.y, directed: tool === "arrow" };
-      }
+      // start on a shape -> anchor that end; start on empty canvas -> free end.
+      // either way we drag out a line that can end on a shape or float free.
+      this.gesture = {
+        kind: "drawEdge",
+        fromId: scene.hitTestShape(world),
+        sx: p.x,
+        sy: p.y,
+        px: p.x,
+        py: p.y,
+        directed: tool === "arrow",
+      };
       return;
     }
 
@@ -244,11 +309,23 @@ export class Controller {
     for (const eid of sel.edges) {
       const e2 = doc.board.edges[eid];
       if (!e2) continue;
-      const from = doc.board.shapes[e2.from];
-      const to = doc.board.shapes[e2.to];
-      if (!from || !to) continue;
-      const mid = resolveEdgeGeometry(doc.board.edges, e2, from, to).mid;
-      const ms = worldToScreen(mid.x, mid.y);
+      const geo = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, e2);
+      // free endpoint handles let you re-aim a floating line's ends
+      if (e2.from === undefined) {
+        const s1 = worldToScreen(geo.p1.x, geo.p1.y);
+        if (Math.hypot(p.x - s1.x, p.y - s1.y) <= EDGE_HANDLE_R + 4) {
+          this.gesture = { kind: "edgeEnd", id: eid, end: "from" };
+          return;
+        }
+      }
+      if (e2.to === undefined) {
+        const s2 = worldToScreen(geo.p2.x, geo.p2.y);
+        if (Math.hypot(p.x - s2.x, p.y - s2.y) <= EDGE_HANDLE_R + 4) {
+          this.gesture = { kind: "edgeEnd", id: eid, end: "to" };
+          return;
+        }
+      }
+      const ms = worldToScreen(geo.mid.x, geo.mid.y);
       if (Math.hypot(p.x - ms.x, p.y - ms.y) <= EDGE_HANDLE_R + 4) {
         this.gesture = { kind: "edgeCtrl", id: eid };
         return;
@@ -277,10 +354,12 @@ export class Controller {
         if (edges.has(hitEdge)) edges.delete(hitEdge);
         else edges.add(hitEdge);
         setSelection(sel.shapes, edges);
+        this.gesture = { kind: "none" };
       } else {
-        setSelection([], [hitEdge]);
+        if (!sel.edges.has(hitEdge)) setSelection([], [hitEdge]);
+        // drag translates a floating line (a fully shape-anchored edge won't move)
+        this.gesture = { kind: "move", lastWX: world.x, lastWY: world.y, moved: false };
       }
-      this.gesture = { kind: "none" };
       return;
     }
 
@@ -311,30 +390,48 @@ export class Controller {
         g.lastX = p.x;
         g.lastY = p.y;
         break;
-      case "connect":
+      case "drawEdge":
         g.px = p.x;
         g.py = p.y;
         scene.requestRender();
         break;
       case "create":
+        g.cx = p.x;
+        g.cy = p.y;
+        g.square = e.shiftKey;
+        scene.requestRender();
+        break;
       case "marquee":
         g.cx = p.x;
         g.cy = p.y;
         scene.requestRender();
         break;
-      case "move":
-        actions.moveShapesBy($selection.get().shapes, world.x - g.lastWX, world.y - g.lastWY);
+      case "move": {
+        const dx = world.x - g.lastWX;
+        const dy = world.y - g.lastWY;
+        const selNow = $selection.get();
+        actions.moveShapesBy(selNow.shapes, dx, dy);
+        actions.moveEdgesBy(selNow.edges, dx, dy);
         g.lastWX = world.x;
         g.lastWY = world.y;
         g.moved = true;
         break;
+      }
       case "edgeCtrl":
         actions.updateEdge(g.id, { cx: world.x, cy: world.y });
+        break;
+      case "edgeEnd":
+        actions.updateEdge(
+          g.id,
+          g.end === "from"
+            ? { x1: world.x, y1: world.y }
+            : { x2: world.x, y2: world.y },
+        );
         break;
       case "resize": {
         const rs = doc.board.shapes[g.id];
         if (rs?.kind === "text") this.applyTextResize(g.id, g.handle, world);
-        else this.applyResize(g.id, g.handle, g.aspect, world);
+        else this.applyResize(g.id, g.handle, g.aspect, world, e.shiftKey);
         break;
       }
     }
@@ -359,17 +456,8 @@ export class Controller {
 
     if (g.kind === "create") {
       this.commitCreate(g);
-    } else if (g.kind === "connect") {
-      const p = this.local(e);
-      const world = screenToWorld(p.x, p.y);
-      const target = scene.hitTestShape(world);
-      if (target && target !== g.from) {
-        const edge = actions.createEdge(g.from, target, g.directed);
-        if (edge) {
-          setSelection([], [edge.id]);
-          $tool.set("select");
-        }
-      }
+    } else if (g.kind === "drawEdge") {
+      this.commitDrawEdge(g, e);
     } else if (g.kind === "marquee") {
       const moved = Math.hypot(g.cx - g.sx, g.cy - g.sy) > MOVE_THRESHOLD;
       if (moved) {
@@ -397,20 +485,63 @@ export class Controller {
         start.y - DEFAULT_SIZE / 2,
       );
     } else {
-      const { x, y, side } = squareBox(start.x, start.y, cur.x, cur.y);
-      const s = Math.max(8, side);
-      shape = actions.createShape(g.tool, x, y, s, s);
+      const b = dragBox(start.x, start.y, cur.x, cur.y, g.square);
+      shape = actions.createShape(g.tool, b.x, b.y, Math.max(8, b.w), Math.max(8, b.h));
     }
     setSelection([shape.id], []);
     $tool.set("select");
   }
 
   /**
-   * Aspect-locked resize from any of the 8 handles. `aspect` = w/h to preserve
-   * (1 for square shapes, natural ratio for images). Corners pin the opposite
-   * corner; edges pin the opposite edge and stay centered on the other axis.
+   * Finish a line/arrow drag. Each end is anchored to a shape if the pointer was
+   * over one, otherwise it floats at the world point. Shape→shape makes a normal
+   * connector; anything with a free end makes a floating line that lives anywhere.
    */
-  private applyResize(id: ID, handle: number, aspect: number, world: Pt): void {
+  private commitDrawEdge(g: Extract<Gesture, { kind: "drawEdge" }>, e: PointerEvent): void {
+    const end = this.local(e);
+    const startW = screenToWorld(g.sx, g.sy);
+    const endW = screenToWorld(end.x, end.y);
+    const dragPx = Math.hypot(end.x - g.sx, end.y - g.sy);
+
+    const fromId = g.fromId;
+    const overTarget = scene.hitTestShape(endW);
+    const toId = overTarget && overTarget !== fromId ? overTarget : null;
+
+    let edge: ReturnType<typeof actions.createFreeEdge> | null = null;
+    if (fromId && toId) {
+      // both ends on shapes -> standard connector (auto-fans with siblings)
+      edge = actions.createEdge(fromId, toId, g.directed);
+    } else if (dragPx >= MOVE_THRESHOLD) {
+      // at least one free end -> floating / half-anchored line
+      edge = actions.createFreeEdge({
+        from: fromId ?? undefined,
+        to: toId ?? undefined,
+        x1: fromId ? undefined : startW.x,
+        y1: fromId ? undefined : startW.y,
+        x2: toId ? undefined : endW.x,
+        y2: toId ? undefined : endW.y,
+        directed: g.directed,
+      });
+    }
+    if (edge) {
+      setSelection([], [edge.id]);
+      $tool.set("select");
+    }
+  }
+
+  /**
+   * Resize from any of the 8 handles. Free width/height by default; when
+   * `lockAspect` is set (shift held) the box is constrained to `aspect` = w/h
+   * (1 for rect/circle → square, natural ratio for images). Corners pin the
+   * opposite corner; edges pin the opposite edge.
+   */
+  private applyResize(
+    id: ID,
+    handle: number,
+    aspect: number,
+    world: Pt,
+    lockAspect: boolean,
+  ): void {
     const s = doc.board.shapes[id];
     if (!s) return;
     const left = s.x;
@@ -425,7 +556,32 @@ export class Controller {
     let nw: number;
     let nh: number;
 
-    if (handle % 2 === 0) {
+    if (!lockAspect) {
+      // free resize: each dragged edge moves independently of the rest
+      if (handle % 2 === 0) {
+        // corner: opposite corner stays fixed, both dimensions free
+        const fx = handle === 0 || handle === 6 ? right : left;
+        const fy = handle === 0 || handle === 2 ? bottom : top;
+        nw = Math.max(Math.abs(world.x - fx), MIN_SIZE);
+        nh = Math.max(Math.abs(world.y - fy), MIN_SIZE);
+        nx = world.x < fx ? fx - nw : fx;
+        ny = world.y < fy ? fy - nh : fy;
+      } else if (handle === 1 || handle === 5) {
+        // top / bottom edge: only height changes, width stays put
+        const fy = handle === 1 ? bottom : top;
+        nh = Math.max(Math.abs(world.y - fy), MIN_SIZE);
+        nw = s.w;
+        nx = s.x;
+        ny = world.y < fy ? fy - nh : fy;
+      } else {
+        // left / right edge: only width changes, height stays put
+        const fx = handle === 7 ? right : left;
+        nw = Math.max(Math.abs(world.x - fx), MIN_SIZE);
+        nh = s.h;
+        ny = s.y;
+        nx = world.x < fx ? fx - nw : fx;
+      }
+    } else if (handle % 2 === 0) {
       // corner: opposite corner stays fixed
       const fx = handle === 0 || handle === 6 ? right : left;
       const fy = handle === 0 || handle === 2 ? bottom : top;
@@ -450,7 +606,7 @@ export class Controller {
     }
 
     const patch: Partial<Shape> = { x: nx, y: ny, w: nw, h: nh };
-    // scale the label with the object (resizes are aspect-locked, so the scale is uniform)
+    // scale the label with the object's height (an edge-only width drag keeps it)
     if (s.text && s.h > 0) {
       const base = s.fontSize ?? defaultLabelFont(s.kind);
       patch.fontSize = Math.min(MAX_FONT, Math.max(MIN_FONT, base * (nh / s.h)));
@@ -533,7 +689,7 @@ export class Controller {
 
   // ---- keyboard ----
   private onKeyDown = (e: KeyboardEvent): void => {
-    if (this.textEditor.active || this.palette.active || isEditingDom()) return;
+    if (this.textEditor.active || this.palette.active || this.menu.active || isEditingDom()) return;
     const meta = e.metaKey || e.ctrlKey;
 
     if (meta && (e.key === "z" || e.key === "Z")) {
@@ -564,7 +720,14 @@ export class Controller {
     }
     if (meta && (e.key === "a" || e.key === "A")) {
       e.preventDefault();
-      setSelection(doc.board.order, Object.keys(doc.board.edges));
+      setSelection(Object.keys(doc.board.shapes), Object.keys(doc.board.edges));
+      return;
+    }
+
+    // refresh the create preview when shift is toggled without moving the mouse
+    if (e.key === "Shift" && this.gesture.kind === "create") {
+      this.gesture.square = true;
+      scene.requestRender();
       return;
     }
 
@@ -582,6 +745,17 @@ export class Controller {
     if ((e.key === "Backspace" || e.key === "Delete") && !meta) {
       e.preventDefault();
       actions.deleteSelection();
+      return;
+    }
+    // z-order: "=" (or "+") to front, "-" (or "_") to back, for the selected shapes
+    if (!meta && (e.key === "=" || e.key === "+")) {
+      e.preventDefault();
+      actions.bringToFront($selection.get().shapes);
+      return;
+    }
+    if (!meta && (e.key === "-" || e.key === "_")) {
+      e.preventDefault();
+      actions.sendToBack($selection.get().shapes);
       return;
     }
     if (e.key === "/" && !meta) {
@@ -606,6 +780,9 @@ export class Controller {
     if (e.key === " ") {
       this.spaceDown = false;
       this.updateCursor();
+    } else if (e.key === "Shift" && this.gesture.kind === "create") {
+      this.gesture.square = false;
+      scene.requestRender();
     }
   };
 
@@ -743,13 +920,10 @@ export class Controller {
   private beginEdgeLabel(id: ID, seed = ""): void {
     const edge = doc.board.edges[id];
     if (!edge) return;
-    const from = doc.board.shapes[edge.from];
-    const to = doc.board.shapes[edge.to];
-    if (!from || !to) return;
     setSelection([], [id]);
     this.editOriginal = edge.label;
     const value = seed ? edge.label + seed : edge.label;
-    const mid = resolveEdgeGeometry(doc.board.edges, edge, from, to).mid;
+    const mid = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, edge).mid;
     const ms = worldToScreen(mid.x, mid.y);
     const w = 160;
     this.textEditor.open({
@@ -881,10 +1055,7 @@ export class Controller {
     for (const eid of sel.edges) {
       const e = doc.board.edges[eid];
       if (!e) continue;
-      const from = doc.board.shapes[e.from];
-      const to = doc.board.shapes[e.to];
-      if (!from || !to) continue;
-      const geo = resolveEdgeGeometry(doc.board.edges, e, from, to);
+      const geo = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, e);
       const pts = geo.ctrl ? quadPoints(geo.p1, geo.ctrl, geo.p2, 16) : [geo.p1, geo.p2];
       const s0 = worldToScreen(pts[0].x, pts[0].y);
       g.moveTo(s0.x, s0.y);
@@ -897,6 +1068,9 @@ export class Controller {
       g.circle(ms.x, ms.y, EDGE_HANDLE_R);
       g.fill(0x0b1220);
       g.stroke({ width: 1.5, color: SELECT });
+      // square handles on free ends, so a floating line can be re-aimed
+      if (e.from === undefined) this.drawEndHandle(g, geo.p1);
+      if (e.to === undefined) this.drawEndHandle(g, geo.p2);
     }
 
     const gest = this.gesture;
@@ -907,33 +1081,45 @@ export class Controller {
       g.fill({ color: ACCENT, alpha: 0.08 });
       g.stroke({ width: 1, color: ACCENT, alpha: 0.8 });
     } else if (gest.kind === "create") {
-      const { x, y, side } = squareBox(gest.sx, gest.sy, gest.cx, gest.cy);
-      if (gest.tool === "circle") g.ellipse(x + side / 2, y + side / 2, side / 2, side / 2);
-      else g.roundRect(x, y, side, side, 4);
+      const b = dragBox(gest.sx, gest.sy, gest.cx, gest.cy, gest.square);
+      if (gest.tool === "circle") g.ellipse(b.x + b.w / 2, b.y + b.h / 2, b.w / 2, b.h / 2);
+      else g.roundRect(b.x, b.y, b.w, b.h, 4);
       g.fill({ color: ACCENT, alpha: 0.1 });
       g.stroke({ width: 1.5, color: ACCENT });
-    } else if (gest.kind === "connect") {
-      const from = doc.board.shapes[gest.from];
-      if (from) {
+    } else if (gest.kind === "drawEdge") {
+      // start anchors to a shape boundary if we pressed on one, else the raw point
+      const fromShape = gest.fromId ? doc.board.shapes[gest.fromId] : null;
+      let bs: Pt;
+      if (fromShape) {
         const w = screenToWorld(gest.px, gest.py);
-        const bp = boundaryPoint(from, w);
-        const bs = worldToScreen(bp.x, bp.y);
-        g.moveTo(bs.x, bs.y);
+        const bp = boundaryPoint(fromShape, w);
+        bs = worldToScreen(bp.x, bp.y);
+      } else {
+        bs = { x: gest.sx, y: gest.sy };
+      }
+      g.moveTo(bs.x, bs.y);
+      g.lineTo(gest.px, gest.py);
+      g.stroke({ width: 2, color: ACCENT, alpha: 0.9 });
+      if (gest.directed) {
+        const ang = Math.atan2(gest.py - bs.y, gest.px - bs.x);
+        const sz = 11;
+        const sp = Math.PI / 7;
+        g.moveTo(gest.px - sz * Math.cos(ang - sp), gest.py - sz * Math.sin(ang - sp));
         g.lineTo(gest.px, gest.py);
-        g.stroke({ width: 2, color: ACCENT, alpha: 0.9 });
-        if (gest.directed) {
-          const ang = Math.atan2(gest.py - bs.y, gest.px - bs.x);
-          const sz = 11;
-          const sp = Math.PI / 7;
-          g.moveTo(gest.px - sz * Math.cos(ang - sp), gest.py - sz * Math.sin(ang - sp));
-          g.lineTo(gest.px, gest.py);
-          g.lineTo(gest.px - sz * Math.cos(ang + sp), gest.py - sz * Math.sin(ang + sp));
-          g.stroke({ width: 2, color: ACCENT, alpha: 0.9, cap: "round", join: "round" });
-        } else {
-          g.circle(gest.px, gest.py, 4);
-          g.fill(ACCENT);
-        }
+        g.lineTo(gest.px - sz * Math.cos(ang + sp), gest.py - sz * Math.sin(ang + sp));
+        g.stroke({ width: 2, color: ACCENT, alpha: 0.9, cap: "round", join: "round" });
+      } else {
+        g.circle(gest.px, gest.py, 4);
+        g.fill(ACCENT);
       }
     }
+  }
+
+  /** A small square handle (screen space) drawn at a free edge endpoint. */
+  private drawEndHandle(g: Graphics, worldPt: Pt): void {
+    const s = worldToScreen(worldPt.x, worldPt.y);
+    g.rect(s.x - HANDLE / 2, s.y - HANDLE / 2, HANDLE, HANDLE);
+    g.fill(0x0b1220);
+    g.stroke({ width: 1.5, color: SELECT });
   }
 }

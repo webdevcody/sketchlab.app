@@ -23,8 +23,16 @@ export interface Shape {
 
 export interface Edge {
   id: ID;
-  from: ID;
-  to: ID;
+  /** source shape id; undefined when this end floats free at (x1,y1) */
+  from?: ID;
+  /** target shape id; undefined when this end floats free at (x2,y2) */
+  to?: ID;
+  /** world-space position of a free `from` end (used when `from` is undefined) */
+  x1?: number;
+  y1?: number;
+  /** world-space position of a free `to` end (used when `to` is undefined) */
+  x2?: number;
+  y2?: number;
   stroke: string;
   label: string;
   /** when true, draw an arrowhead at the `to` end (directed edge) */
@@ -43,7 +51,7 @@ export interface Board {
   name: string;
   shapes: Record<ID, Shape>;
   edges: Record<ID, Edge>;
-  /** paint order (bottom -> top) of shape ids */
+  /** unified paint order (bottom -> top) of shape AND edge ids */
   order: ID[];
   createdAt: number;
   updatedAt: number;

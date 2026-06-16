@@ -15,8 +15,8 @@ import { createNodeView, type NodeView, updateNodeView } from "./shapeView";
 class Scene {
   app!: Application;
   private world!: Container;
-  private edgeLayer!: Container;
-  private nodeLayer!: Container;
+  /** single z-stack holding both edge and node views, ordered by `doc.board.order` */
+  private itemLayer!: Container;
   private overlay!: Graphics;
 
   private nodeViews = new Map<ID, NodeView>();
@@ -45,9 +45,8 @@ class Scene {
     app.ticker.stop();
 
     this.world = new Container();
-    this.edgeLayer = new Container();
-    this.nodeLayer = new Container();
-    this.world.addChild(this.edgeLayer, this.nodeLayer);
+    this.itemLayer = new Container();
+    this.world.addChild(this.itemLayer);
     this.overlay = new Graphics();
     app.stage.addChild(this.world, this.overlay);
 
@@ -95,7 +94,7 @@ class Scene {
     if (!s) return;
     const view = createNodeView(s, () => this.requestRender());
     this.nodeViews.set(id, view);
-    this.nodeLayer.addChild(view.container);
+    this.itemLayer.addChild(view.container);
     this.requestRender();
   }
 
@@ -121,11 +120,22 @@ class Scene {
   removeNode(id: ID): void {
     const view = this.nodeViews.get(id);
     if (view) {
-      this.nodeLayer.removeChild(view.container);
+      this.itemLayer.removeChild(view.container);
       view.container.destroy({ children: true });
       this.nodeViews.delete(id);
     }
     this.nodeEdges.delete(id);
+    this.requestRender();
+  }
+
+  /** Re-sort the item layer's paint order (back→front) to match `doc.board.order`. */
+  reorder(): void {
+    let idx = 0;
+    for (const id of doc.board.order) {
+      const view = this.nodeViews.get(id) ?? this.edgeViews.get(id);
+      // `idx` only advances for placed views, so it stays a valid child index
+      if (view) this.itemLayer.setChildIndex(view.container, idx++);
+    }
     this.requestRender();
   }
 
@@ -135,7 +145,7 @@ class Scene {
     if (!e) return;
     const view = createEdgeView(e.from, e.to);
     this.edgeViews.set(id, view);
-    this.edgeLayer.addChild(view.container);
+    this.itemLayer.addChild(view.container);
     this.registerAdj(id, e.from, e.to);
     // a new parallel edge changes how its siblings fan, so refresh them too
     for (const sid of this.pairEdges(e.from, e.to)) this.refreshEdge(sid);
@@ -155,7 +165,7 @@ class Scene {
     const from = view?.from;
     const to = view?.to;
     if (view) {
-      this.edgeLayer.removeChild(view.container);
+      this.itemLayer.removeChild(view.container);
       view.container.destroy({ children: true });
       this.edgeViews.delete(id);
     }
@@ -166,7 +176,8 @@ class Scene {
   }
 
   /** Edge ids connecting both `a` and `b` (parallel edges of one pair). */
-  private pairEdges(a: ID, b: ID): ID[] {
+  private pairEdges(a: ID | undefined, b: ID | undefined): ID[] {
+    if (a === undefined || b === undefined) return [];
     const sa = this.nodeEdges.get(a);
     const sb = this.nodeEdges.get(b);
     if (!sa || !sb) return [];
@@ -176,8 +187,9 @@ class Scene {
     return out;
   }
 
-  private registerAdj(edgeId: ID, from: ID, to: ID): void {
+  private registerAdj(edgeId: ID, from: ID | undefined, to: ID | undefined): void {
     for (const nid of [from, to]) {
+      if (nid === undefined) continue;
       let set = this.nodeEdges.get(nid);
       if (!set) {
         set = new Set();
@@ -191,17 +203,22 @@ class Scene {
     const view = this.edgeViews.get(id);
     const e = doc.board.edges[id];
     if (!view || !e) return;
-    const from = doc.board.shapes[e.from];
-    const to = doc.board.shapes[e.to];
-    if (!from || !to) return;
-    updateEdgeView(view, e, resolveEdgeGeometry(doc.board.edges, e, from, to));
+    updateEdgeView(view, e, resolveEdgeGeometry(doc.board.edges, doc.board.shapes, e));
   }
 
   // ---- bulk ----
   rebuild(): void {
     this.clear();
-    for (const id of doc.board.order) this.addNode(id);
-    for (const id of Object.keys(doc.board.edges)) this.addEdge(id);
+    // walk the unified z-stack so edges and nodes interleave by paint order
+    for (const id of doc.board.order) {
+      if (doc.board.shapes[id]) this.addNode(id);
+      else if (doc.board.edges[id]) this.addEdge(id);
+    }
+    // safety net: draw anything `order` forgot to mention (stacked on top)
+    for (const id of Object.keys(doc.board.shapes))
+      if (!this.nodeViews.has(id)) this.addNode(id);
+    for (const id of Object.keys(doc.board.edges))
+      if (!this.edgeViews.has(id)) this.addEdge(id);
     this.requestRender();
   }
 
@@ -211,8 +228,7 @@ class Scene {
     this.nodeViews.clear();
     this.edgeViews.clear();
     this.nodeEdges.clear();
-    this.nodeLayer.removeChildren();
-    this.edgeLayer.removeChildren();
+    this.itemLayer.removeChildren();
   }
 
   // ---- hit testing (world space) ----
@@ -229,10 +245,7 @@ class Scene {
     let best: ID | null = null;
     let bestD = tol;
     for (const e of Object.values(doc.board.edges)) {
-      const from = doc.board.shapes[e.from];
-      const to = doc.board.shapes[e.to];
-      if (!from || !to) continue;
-      const geo = resolveEdgeGeometry(doc.board.edges, e, from, to);
+      const geo = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, e);
       const pts = geo.ctrl ? quadPoints(geo.p1, geo.ctrl, geo.p2, 14) : [geo.p1, geo.p2];
       for (let i = 0; i < pts.length - 1; i++) {
         const d = distToSegment(p, pts[i], pts[i + 1]);
