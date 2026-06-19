@@ -1,4 +1,7 @@
-import { measureTextBox } from "../render/measure";
+import { stepFontScale } from "../render/fontPresets";
+import { clampFont, measureTextBox } from "../render/measure";
+import { EDGE_LABEL_FONT, edgeFontScale } from "../render/edgeView";
+import { defaultLabelFont, effectiveFontSize, shapeFontScale } from "../render/shapeView";
 import { scene } from "../render/scene";
 import { uid } from "../util";
 import {
@@ -114,12 +117,97 @@ export function setShapeText(id: ID, text: string): void {
   if (!s) return;
   s.text = text;
   if (s.kind === "text") {
-    const box = measureTextBox(text, s.fontSize);
+    const box = measureTextBox(text, effectiveFontSize(s));
     s.w = box.w;
     s.h = box.h;
   }
   scene.updateNode(id);
   bumpRevision();
+}
+
+/**
+ * Text objects are content-sized, so a font change must re-measure the box.
+ * Re-fit around the current center so the object grows/shrinks in place.
+ */
+function reflowTextBox(s: Shape): void {
+  const cx = s.x + s.w / 2;
+  const cy = s.y + s.h / 2;
+  const box = measureTextBox(s.text, effectiveFontSize(s));
+  s.x = cx - box.w / 2;
+  s.y = cy - box.h / 2;
+  s.w = box.w;
+  s.h = box.h;
+}
+
+/**
+ * Set the board-wide font scale (Small/Medium/Large/XLarge). Only objects
+ * without an explicit `fontSize` follow the new scale; per-object overrides
+ * (from a preset click or resize) are left unchanged.
+ */
+export function setFontScale(scale: number): void {
+  doc.board.fontScale = scale;
+  for (const s of Object.values(doc.board.shapes)) {
+    if (s.fontSize != null) continue;
+    if (s.kind === "text") reflowTextBox(s);
+    scene.updateNode(s.id);
+  }
+  for (const e of Object.values(doc.board.edges)) {
+    if (e.fontSize != null) continue;
+    scene.updateEdge(e.id);
+  }
+  bumpRevision();
+}
+
+/**
+ * Apply a font preset to specific objects only (individual modification): pins
+ * each to an explicit `fontSize` of its kind default × scale. These objects then
+ * keep that size independent of the board default until resized again.
+ */
+export function setShapesFontPreset(ids: Iterable<ID>, scale: number): void {
+  for (const id of ids) {
+    const s = doc.board.shapes[id];
+    if (!s) continue;
+    s.fontSize = clampFont(defaultLabelFont(s.kind) * scale);
+    if (s.kind === "text") reflowTextBox(s);
+    scene.updateNode(id);
+  }
+  bumpRevision();
+}
+
+/** Apply a font preset to selected edges (lines/arrows). */
+export function setEdgesFontPreset(ids: Iterable<ID>, scale: number): void {
+  for (const id of ids) {
+    const e = doc.board.edges[id];
+    if (!e) continue;
+    e.fontSize = clampFont(EDGE_LABEL_FONT * scale);
+    scene.updateEdge(id);
+  }
+  bumpRevision();
+}
+
+/** Bump font size one preset tier for the selection, or the board default when empty. */
+export function adjustFontSize(dir: 1 | -1): void {
+  const { shapes, edges } = $selection.get();
+  if (shapes.size || edges.size) {
+    for (const id of shapes) {
+      const s = doc.board.shapes[id];
+      if (!s) continue;
+      const scale = stepFontScale(shapeFontScale(s), dir);
+      s.fontSize = clampFont(defaultLabelFont(s.kind) * scale);
+      if (s.kind === "text") reflowTextBox(s);
+      scene.updateNode(id);
+    }
+    for (const id of edges) {
+      const e = doc.board.edges[id];
+      if (!e) continue;
+      const scale = stepFontScale(edgeFontScale(e), dir);
+      e.fontSize = clampFont(EDGE_LABEL_FONT * scale);
+      scene.updateEdge(id);
+    }
+    bumpRevision();
+    return;
+  }
+  setFontScale(stepFontScale(doc.board.fontScale ?? 1, dir));
 }
 
 export function deleteShape(id: ID): void {

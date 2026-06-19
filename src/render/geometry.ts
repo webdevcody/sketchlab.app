@@ -65,17 +65,19 @@ export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - cx, p.y - cy);
 }
 
+/** Point on a quadratic bezier at parameter t (0 = start, 1 = end). */
+export function quadPointAt(a: Pt, ctrl: Pt, b: Pt, t: number): Pt {
+  const mt = 1 - t;
+  return {
+    x: mt * mt * a.x + 2 * mt * t * ctrl.x + t * t * b.x,
+    y: mt * mt * a.y + 2 * mt * t * ctrl.y + t * t * b.y,
+  };
+}
+
 /** Sample a quadratic bezier into n+1 points. */
 export function quadPoints(a: Pt, ctrl: Pt, b: Pt, n = 12): Pt[] {
   const out: Pt[] = [];
-  for (let i = 0; i <= n; i++) {
-    const t = i / n;
-    const mt = 1 - t;
-    out.push({
-      x: mt * mt * a.x + 2 * mt * t * ctrl.x + t * t * b.x,
-      y: mt * mt * a.y + 2 * mt * t * ctrl.y + t * t * b.y,
-    });
-  }
+  for (let i = 0; i <= n; i++) out.push(quadPointAt(a, ctrl, b, i / n));
   return out;
 }
 
@@ -105,7 +107,9 @@ export function edgeGeometry(from: EdgeEnd, to: EdgeEnd, ctrl: Pt | null): EdgeG
   const targetB = ctrl ?? endCenter(from);
   const p1 = endPoint(from, targetA);
   const p2 = endPoint(to, targetB);
-  const mid = ctrl ?? { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  const mid = ctrl
+    ? quadPointAt(p1, ctrl, p2, 0.5)
+    : { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
   return { p1, p2, ctrl, mid };
 }
 
@@ -174,8 +178,8 @@ function autoControl(edge: Edge, from: Shape, to: Shape, siblings: Edge[]): Pt |
 
 /**
  * Geometry for an edge honoring (a) a manual bend (edge.cx/cy) or (b) the auto
- * parallel-edge fan. For auto-curves the label/handle anchor (`mid`) sits on the
- * curve apex rather than at the control point.
+ * parallel-edge fan. Label anchor (`mid`) always sits on the curve (t = 0.5);
+ * the bend handle uses the control point for manual bends and `mid` for auto-curves.
  */
 export function resolveEdgeGeometry(
   edges: Record<ID, Edge>,
@@ -191,15 +195,13 @@ export function resolveEdgeGeometry(
     from.shape && to.shape
       ? autoControl(edge, from.shape, to.shape, pairSiblings(edges, edge))
       : null;
-  if (!ctrl) return edgeGeometry(from, to, null);
-  const geo = edgeGeometry(from, to, ctrl);
-  return {
-    ...geo,
-    mid: {
-      x: 0.25 * geo.p1.x + 0.5 * ctrl.x + 0.25 * geo.p2.x,
-      y: 0.25 * geo.p1.y + 0.5 * ctrl.y + 0.25 * geo.p2.y,
-    },
-  };
+  return edgeGeometry(from, to, ctrl);
+}
+
+/** Where the bend handle is drawn / hit-tested for an edge. */
+export function edgeBendHandle(edge: Edge, geo: EdgeGeometry): Pt {
+  if (geo.ctrl && edge.cx !== undefined && edge.cy !== undefined) return geo.ctrl;
+  return geo.mid;
 }
 
 /** Sentinel `fill`/`stroke` value meaning "no paint" — the shape renders as outline only. */

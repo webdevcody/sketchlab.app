@@ -6,9 +6,18 @@ function context(): CanvasRenderingContext2D | null {
   return ctx;
 }
 
-export const TEXT_FONT_SIZE = 20;
+export const TEXT_FONT_SIZE = 24;
 export const TEXT_PAD = 10;
 const LINE_RATIO = 1.3;
+
+/** Clamp bounds (world units) for any label font, shared by resize + preset sizing. */
+export const MIN_FONT = 8;
+export const MAX_FONT = 400;
+
+/** Clamp a font size to the allowed range. */
+export function clampFont(n: number): number {
+  return Math.min(MAX_FONT, Math.max(MIN_FONT, n));
+}
 
 /** Box size that fits a text object's content (so the object auto-grows). */
 export function measureTextBox(text: string, fontSize = TEXT_FONT_SIZE): { w: number; h: number } {

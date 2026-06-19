@@ -35,6 +35,8 @@ export interface Edge {
   y2?: number;
   stroke: string;
   label: string;
+  /** label font size in world units; follows board fontScale when unset */
+  fontSize?: number;
   /** when true, draw an arrowhead at the `to` end (directed edge) */
   directed?: boolean;
   /**
@@ -53,6 +55,13 @@ export interface Board {
   edges: Record<ID, Edge>;
   /** unified paint order (bottom -> top) of shape AND edge ids */
   order: ID[];
+  /**
+   * Board-wide font multiplier (Small/Medium/Large/XLarge) applied to every
+   * object's label on top of its per-kind default. Objects with an explicit
+   * `Shape.fontSize` (individually sized) carry that absolute value instead.
+   * Undefined on legacy boards → treated as 1.
+   */
+  fontScale?: number;
   createdAt: number;
   updatedAt: number;
 }

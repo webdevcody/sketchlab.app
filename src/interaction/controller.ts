@@ -1,13 +1,15 @@
 import type { Graphics } from "pixi.js";
 import {
   boundaryPoint,
+  edgeBendHandle,
   type Pt,
   quadPoints,
   readableText,
   resolveEdgeGeometry,
 } from "../render/geometry";
 import { scene } from "../render/scene";
-import { defaultLabelFont } from "../render/shapeView";
+import { effectiveEdgeFontSize } from "../render/edgeView";
+import { effectiveFontSize } from "../render/shapeView";
 import * as actions from "../state/actions";
 import { DEFAULT_SIZE } from "../state/actions";
 import { copySelection, cutSelection, pasteClipboard } from "../state/clipboard";
@@ -21,7 +23,7 @@ import {
   setSelection,
 } from "../state/store";
 import type { ID, Shape } from "../state/types";
-import { measureTextBox, TEXT_FONT_SIZE, TEXT_PAD } from "../render/measure";
+import { MAX_FONT, measureTextBox, MIN_FONT, TEXT_FONT_SIZE, TEXT_PAD } from "../render/measure";
 import { panBy, zoomAt } from "./camera";
 import { ContextMenu } from "./contextMenu";
 import { IconPalette } from "./iconPalette";
@@ -34,8 +36,6 @@ const HANDLE = 9;
 const EDGE_HANDLE_R = 6;
 const MOVE_THRESHOLD = 3;
 const MIN_SIZE = 16;
-const MIN_FONT = 8;
-const MAX_FONT = 400;
 
 // handle indices: 0 tl, 1 top, 2 tr, 3 right, 4 br, 5 bottom, 6 bl, 7 left
 const RESIZE_CURSORS = [
@@ -249,8 +249,8 @@ export class Controller {
     if (!$selection.get().shapes.has(hit)) setSelection([hit], []);
     const ids = [...$selection.get().shapes];
     this.menu.open(e.clientX, e.clientY, [
-      { label: "Bring to Front", hint: "=", onSelect: () => actions.bringToFront(ids) },
-      { label: "Send to Back", hint: "-", onSelect: () => actions.sendToBack(ids) },
+      { label: "Bring to Front", hint: "]", onSelect: () => actions.bringToFront(ids) },
+      { label: "Send to Back", hint: "[", onSelect: () => actions.sendToBack(ids) },
     ]);
   };
 
@@ -325,7 +325,8 @@ export class Controller {
           return;
         }
       }
-      const ms = worldToScreen(geo.mid.x, geo.mid.y);
+      const bend = edgeBendHandle(e2, geo);
+      const ms = worldToScreen(bend.x, bend.y);
       if (Math.hypot(p.x - ms.x, p.y - ms.y) <= EDGE_HANDLE_R + 4) {
         this.gesture = { kind: "edgeCtrl", id: eid };
         return;
@@ -608,7 +609,7 @@ export class Controller {
     const patch: Partial<Shape> = { x: nx, y: ny, w: nw, h: nh };
     // scale the label with the object's height (an edge-only width drag keeps it)
     if (s.text && s.h > 0) {
-      const base = s.fontSize ?? defaultLabelFont(s.kind);
+      const base = effectiveFontSize(s);
       patch.fontSize = Math.min(MAX_FONT, Math.max(MIN_FONT, base * (nh / s.h)));
     }
     actions.updateShape(id, patch);
@@ -628,7 +629,7 @@ export class Controller {
     const bottom = s.y + s.h;
     const cx = s.x + s.w / 2;
     const cy = s.y + s.h / 2;
-    const curFont = s.fontSize ?? TEXT_FONT_SIZE;
+    const curFont = effectiveFontSize(s);
 
     // scale factor from the drag, relative to the current box (≈ proportional to font)
     let k: number;
@@ -747,13 +748,24 @@ export class Controller {
       actions.deleteSelection();
       return;
     }
-    // z-order: "=" (or "+") to front, "-" (or "_") to back, for the selected shapes
+    // font size: "=" / "+" larger, "-" / "_" smaller (selection or board default)
     if (!meta && (e.key === "=" || e.key === "+")) {
+      e.preventDefault();
+      actions.adjustFontSize(1);
+      return;
+    }
+    if (!meta && (e.key === "-" || e.key === "_")) {
+      e.preventDefault();
+      actions.adjustFontSize(-1);
+      return;
+    }
+    // z-order: "]" to front, "[" to back
+    if (!meta && e.key === "]") {
       e.preventDefault();
       actions.bringToFront($selection.get().shapes);
       return;
     }
-    if (!meta && (e.key === "-" || e.key === "_")) {
+    if (!meta && e.key === "[") {
       e.preventDefault();
       actions.sendToBack($selection.get().shapes);
       return;
@@ -791,8 +803,9 @@ export class Controller {
   /** Create a free-floating text object at a world point and edit it immediately. */
   private placeText(wx: number, wy: number): void {
     // size the shape to the real text metrics so the selection box matches the
-    // editor overlay (a hardcoded box wouldn't line up with the auto-grown editor)
-    const box = measureTextBox("");
+    // editor overlay (a hardcoded box wouldn't line up with the auto-grown editor).
+    // Measure at the board's current font scale so a fresh text box isn't medium-sized.
+    const box = measureTextBox("", TEXT_FONT_SIZE * (doc.board.fontScale ?? 1));
     const shape = actions.createShape("text", wx, wy, box.w, box.h, {
       fill: "#e2e8f0",
       stroke: "#e2e8f0",
@@ -812,7 +825,7 @@ export class Controller {
     const zoom = this.zoom();
 
     if (s.kind === "text") {
-      const fontSize = s.fontSize ?? TEXT_FONT_SIZE;
+      const fontSize = effectiveFontSize(s);
       // hide the rendered text so the chromeless editor isn't doubled by it
       scene.setNodeLabelHidden(id, true);
       // grow-with-content editor that overlays the floating text
@@ -855,7 +868,7 @@ export class Controller {
       scene.setNodeLabelHidden(id, true);
       const restore = () => scene.setNodeLabelHidden(id, false);
       const w = Math.max(80, s.w * 1.5) * zoom;
-      const fontSize = s.fontSize ?? defaultLabelFont(s.kind);
+      const fontSize = effectiveFontSize(s);
       this.textEditor.open({
         x: tl.x + (s.w * zoom - w) / 2,
         y: tl.y + s.h * zoom + 6 * zoom,
@@ -889,7 +902,7 @@ export class Controller {
     // chromeless editor sit directly on the shape fill, mirroring the label's exact style.
     scene.setNodeLabelHidden(id, true);
     const restoreLabel = () => scene.setNodeLabelHidden(id, false);
-    const labelFont = s.fontSize ?? defaultLabelFont(s.kind);
+    const labelFont = effectiveFontSize(s);
     this.textEditor.open({
       x: tl.x,
       y: tl.y,
@@ -925,16 +938,18 @@ export class Controller {
     const value = seed ? edge.label + seed : edge.label;
     const mid = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, edge).mid;
     const ms = worldToScreen(mid.x, mid.y);
+    const { zoom } = $camera.get();
+    const labelFont = effectiveEdgeFontSize(edge);
     const w = 160;
     this.textEditor.open({
       x: ms.x - w / 2,
-      y: ms.y - 14,
+      y: ms.y - labelFont * 0.5 * zoom,
       w,
-      h: 22,
+      h: labelFont * 1.3 * zoom,
       value,
       color: "#e2e8f0",
       background: "rgba(11,18,32,0.95)",
-      fontSize: 14,
+      fontSize: labelFont * zoom,
       selectAll: !seed,
       onInput: (v) => actions.setEdgeLabel(id, v),
       onCommit: (v) => actions.setEdgeLabel(id, v),
@@ -1064,7 +1079,8 @@ export class Controller {
         g.lineTo(sp.x, sp.y);
       }
       g.stroke({ width: 4, color: SELECT, alpha: 0.55, cap: "round" });
-      const ms = worldToScreen(geo.mid.x, geo.mid.y);
+      const bend = edgeBendHandle(e, geo);
+      const ms = worldToScreen(bend.x, bend.y);
       g.circle(ms.x, ms.y, EDGE_HANDLE_R);
       g.fill(0x0b1220);
       g.stroke({ width: 1.5, color: SELECT });

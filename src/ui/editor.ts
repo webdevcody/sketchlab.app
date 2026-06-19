@@ -5,15 +5,27 @@ import { saveNow, startAutosave, stopAutosave } from "../persistence/autosave";
 import { saveBoard } from "../persistence/db";
 import { shareUrl } from "../persistence/share";
 import { scene } from "../render/scene";
+import { edgeFontScale } from "../render/edgeView";
+import { shapeFontScale } from "../render/shapeView";
 import * as actions from "../state/actions";
 import { $canRedo, $canUndo, disposeHistory, initHistory, redo, undo } from "../state/history";
-import { $camera, $selection, $style, $tool, doc } from "../state/store";
+import { $camera, $revision, $selection, $style, $tool, doc } from "../state/store";
 import type { Board, Camera, ToolName } from "../state/types";
 import { clear, h, toast } from "./dom";
 import { navigate } from "./nav";
 import { createSwatchPicker } from "./swatchPicker";
 
+import { FONT_EPS, FONT_PRESET_SCALES } from "../render/fontPresets";
+
 const HEX = /^#[0-9a-fA-F]{6}$/;
+
+const FONT_PRESET_LABELS = ["S", "M", "L", "XL"] as const;
+const FONT_PRESET_TITLES = ["Small font", "Medium font", "Large font", "Extra-large font"] as const;
+const FONT_PRESETS = FONT_PRESET_SCALES.map((scale, i) => ({
+  label: FONT_PRESET_LABELS[i],
+  scale,
+  title: FONT_PRESET_TITLES[i],
+}));
 
 function svg(inner: string): string {
   return `<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -242,9 +254,67 @@ export async function mountEditor(
     "Delete",
   );
 
+  // ---- font-size segmented control ----
+  // With shapes/edges selected, presets size just those (individual override);
+  // with nothing selected, they set the board-wide default and resize every object.
+  const fontBtns = FONT_PRESETS.map((p) =>
+    h(
+      "button",
+      {
+        class: "seg__btn",
+        title: p.title,
+        onclick: () => {
+          const sel = $selection.get();
+          if (sel.shapes.size || sel.edges.size) {
+            if (sel.shapes.size) actions.setShapesFontPreset(sel.shapes, p.scale);
+            if (sel.edges.size) actions.setEdgesFontPreset(sel.edges, p.scale);
+          } else {
+            actions.setFontScale(p.scale);
+          }
+        },
+      },
+      p.label,
+    ),
+  );
+  const fontSeg = h("div", { class: "seg" }, ...fontBtns);
+
+  /** The scale the panel should highlight: the selection's shared scale, else the board default. */
+  const activeFontScale = (): number | null => {
+    const sel = $selection.get();
+    const shapeIds = [...sel.shapes];
+    const edgeIds = [...sel.edges];
+    if (shapeIds.length || edgeIds.length) {
+      let shared: number | null = null;
+      for (const id of shapeIds) {
+        const s = doc.board.shapes[id];
+        if (!s) continue;
+        const r = shapeFontScale(s);
+        if (shared === null) shared = r;
+        else if (Math.abs(shared - r) > FONT_EPS) return null; // mixed selection
+      }
+      for (const id of edgeIds) {
+        const e = doc.board.edges[id];
+        if (!e) continue;
+        const r = edgeFontScale(e);
+        if (shared === null) shared = r;
+        else if (Math.abs(shared - r) > FONT_EPS) return null; // mixed selection
+      }
+      return shared;
+    }
+    return doc.board.fontScale ?? 1;
+  };
+  const syncFont = () => {
+    const cur = activeFontScale();
+    fontBtns.forEach((b, i) =>
+      b.classList.toggle("is-active", cur != null && Math.abs(FONT_PRESETS[i].scale - cur) < FONT_EPS),
+    );
+  };
+  unsubs.push($revision.subscribe(syncFont));
+
   const stylePanel = h(
     "div",
     { class: "style-panel" },
+    h("div", { class: "field" }, h("span", null, "Font"), fontSeg),
     h("div", { class: "field" }, h("span", null, "Fill"), fillPicker.el),
     h("div", { class: "field" }, h("span", null, "Outline"), strokePicker.el),
     deleteBtn,
@@ -267,6 +337,7 @@ export async function mountEditor(
     const hasSel = sel.shapes.size > 0 || sel.edges.size > 0;
     deleteBtn.toggleAttribute("disabled", !hasSel);
     stylePanel.classList.toggle("style-panel--editing", hasSel);
+    syncFont();
   };
   unsubs.push($selection.subscribe(syncStyle));
 

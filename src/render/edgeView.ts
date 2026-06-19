@@ -1,8 +1,23 @@
 import { Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
+import { doc } from "../state/store";
 import type { Edge, ID } from "../state/types";
 import { type EdgeGeometry, hexToNumber } from "./geometry";
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
+
+/** Default edge/arrow label font size (world units), before any resize scaling. */
+export const EDGE_LABEL_FONT = 14;
+
+/** The label font (world units) an edge actually renders at. */
+export function effectiveEdgeFontSize(e: Edge): number {
+  if (e.fontSize != null) return e.fontSize;
+  return EDGE_LABEL_FONT * (doc.board.fontScale ?? 1);
+}
+
+/** S/M/L/XL tier implied by an edge's current label size. */
+export function edgeFontScale(e: Edge): number {
+  return effectiveEdgeFontSize(e) / EDGE_LABEL_FONT;
+}
 
 export interface EdgeView {
   container: Container;
@@ -13,10 +28,10 @@ export interface EdgeView {
   to?: ID;
 }
 
-function labelStyle(): TextStyleOptions {
+function labelStyle(fontSize: number): TextStyleOptions {
   return {
     fontFamily: FONT,
-    fontSize: 14,
+    fontSize,
     fill: 0xe2e8f0,
     align: "center",
   };
@@ -58,12 +73,14 @@ export function updateEdgeView(
 
   // label with a small backing panel for legibility
   if (edge.label) {
+    const fontSize = effectiveEdgeFontSize(edge);
     if (!view.label) {
-      view.label = new Text({ text: edge.label, style: labelStyle(), resolution: 2 });
+      view.label = new Text({ text: edge.label, style: labelStyle(fontSize), resolution: 2 });
       view.label.anchor.set(0.5);
       view.container.addChild(view.label);
     } else {
       view.label.text = edge.label;
+      view.label.style = labelStyle(fontSize);
     }
     const lw = view.label.width + 10;
     const lh = view.label.height + 4;

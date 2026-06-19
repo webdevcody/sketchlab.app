@@ -8,6 +8,7 @@ import {
   Texture,
 } from "pixi.js";
 import type { Shape, ShapeKind } from "../state/types";
+import { doc } from "../state/store";
 import { hexToNumber, NO_FILL, readableText } from "./geometry";
 import { drawIcon } from "./icons";
 import { TEXT_FONT_SIZE, TEXT_PAD } from "./measure";
@@ -15,14 +16,29 @@ import { TEXT_FONT_SIZE, TEXT_PAD } from "./measure";
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
 /** caption font for an icon/image label, and the centered label inside a rect/circle */
-const ICON_LABEL_FONT = 14;
-const SHAPE_LABEL_FONT = 16;
+const ICON_LABEL_FONT = 16;
+const SHAPE_LABEL_FONT = 20;
 
 /** Default label font size (world units) for a shape kind, before any resize scaling. */
 export function defaultLabelFont(kind: ShapeKind): number {
   if (kind === "text") return TEXT_FONT_SIZE;
   if (kind === "icon" || kind === "image") return ICON_LABEL_FONT;
   return SHAPE_LABEL_FONT; // rect / circle
+}
+
+/**
+ * The label font (world units) a shape actually renders at. An explicit
+ * `fontSize` (set by resizing or a per-object preset) wins; otherwise the
+ * kind's default is multiplied by the board-wide font scale (S/M/L/XL).
+ */
+export function effectiveFontSize(s: Shape): number {
+  if (s.fontSize != null) return s.fontSize;
+  return defaultLabelFont(s.kind) * (doc.board.fontScale ?? 1);
+}
+
+/** S/M/L/XL tier (0.75–2.25) implied by a shape's current label size. */
+export function shapeFontScale(s: Shape): number {
+  return effectiveFontSize(s) / defaultLabelFont(s.kind);
 }
 
 export interface NodeView {
@@ -41,15 +57,17 @@ function styleKeyOf(s: Shape): string {
   return `${s.kind}|${s.w}|${s.h}|${s.fill}|${s.stroke}|${s.icon ?? ""}|${s.src ?? ""}`;
 }
 function textKeyOf(s: Shape): string {
-  return `${s.kind}|${s.text}|${s.w}|${s.h}|${s.fill}|${s.fontSize ?? ""}`;
+  // key on the EFFECTIVE size (not raw fontSize) so a board-wide scale change
+  // invalidates the cache for objects that have no explicit per-object font
+  return `${s.kind}|${s.text}|${s.w}|${s.h}|${s.fill}|${effectiveFontSize(s)}`;
 }
 
 /** Gap (world units) between an icon/image and its label sitting beneath it. */
 const LABEL_GAP = 6;
 
 function textStyle(s: Shape): TextStyleOptions {
+  const fontSize = effectiveFontSize(s);
   if (s.kind === "text") {
-    const fontSize = s.fontSize ?? TEXT_FONT_SIZE;
     return {
       fontFamily: FONT,
       fontSize,
@@ -62,7 +80,6 @@ function textStyle(s: Shape): TextStyleOptions {
   }
   if (s.kind === "icon" || s.kind === "image") {
     // label sits beneath the object on the canvas, so it needs a light, canvas-readable color
-    const fontSize = s.fontSize ?? ICON_LABEL_FONT;
     return {
       fontFamily: FONT,
       fontSize,
@@ -74,7 +91,6 @@ function textStyle(s: Shape): TextStyleOptions {
       lineHeight: fontSize * 1.3,
     };
   }
-  const fontSize = s.fontSize ?? SHAPE_LABEL_FONT;
   return {
     fontFamily: FONT,
     fontSize,
