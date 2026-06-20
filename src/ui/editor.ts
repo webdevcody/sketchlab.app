@@ -228,25 +228,24 @@ export async function mountEditor(
 
   // ---- style panel ----
   const fillPicker = createSwatchPicker({
-    title: "Fill / background color",
+    title: "Fill / background color (press f)",
     initial: $style.get().fill,
     transparent: true,
-    onPick: (color) => {
-      $style.set({ ...$style.get(), fill: color });
-      const sel = $selection.get();
-      if (sel.shapes.size) actions.setShapesStyle(sel.shapes, { fill: color });
-    },
+    onPick: (color) => actions.applyColor("fill", color),
   });
   const strokePicker = createSwatchPicker({
-    title: "Outline / line color",
+    title: "Outline / line color (press u)",
     initial: $style.get().stroke,
-    onPick: (color) => {
-      $style.set({ ...$style.get(), stroke: color });
-      const sel = $selection.get();
-      if (sel.shapes.size) actions.setShapesStyle(sel.shapes, { stroke: color });
-      for (const id of sel.edges) actions.updateEdge(id, { stroke: color });
-    },
+    onPick: (color) => actions.applyColor("stroke", color),
   });
+  // f / u open the matching popover (and switch to it if the other one is open);
+  // pressing the same key again toggles it closed.
+  controller.onColorHotkey = (target) => {
+    const picker = target === "fill" ? fillPicker : strokePicker;
+    const other = target === "fill" ? strokePicker : fillPicker;
+    other.close();
+    picker.toggle();
+  };
 
   const deleteBtn = h(
     "button",
@@ -315,8 +314,20 @@ export async function mountEditor(
     "div",
     { class: "style-panel" },
     h("div", { class: "field" }, h("span", null, "Font"), fontSeg),
-    h("div", { class: "field" }, h("span", null, "Fill"), fillPicker.el),
-    h("div", { class: "field" }, h("span", null, "Outline"), strokePicker.el),
+    h(
+      "div",
+      { class: "field" },
+      h("span", null, "Fill"),
+      fillPicker.el,
+      h("kbd", { class: "field__key", title: "Press f to open" }, "f"),
+    ),
+    h(
+      "div",
+      { class: "field" },
+      h("span", null, "Outline"),
+      strokePicker.el,
+      h("kbd", { class: "field__key", title: "Press u to open" }, "u"),
+    ),
     deleteBtn,
   );
 
@@ -342,13 +353,6 @@ export async function mountEditor(
   unsubs.push($selection.subscribe(syncStyle));
 
   editor.append(topbar, banner, toolbar, zoombar, stylePanel);
-
-  const hint = h(
-    "div",
-    { class: "hint" },
-    "Double-click to add text · / for icons · drop an image · scroll to pan · ⌘/Ctrl+scroll to zoom",
-  );
-  editor.appendChild(hint);
 
   if (!shared) startAutosave();
 

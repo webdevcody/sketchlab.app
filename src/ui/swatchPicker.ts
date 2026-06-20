@@ -24,11 +24,50 @@ export const SWATCH_COLORS = [
   "#f9a8d4", // pink
 ];
 
+/**
+ * A single-character hotkey per swatch (mnemonic where possible), shown on each
+ * chip and active while the popover is open. Parallel to {@link SWATCH_COLORS}.
+ * Avoids `f` / `u`, which open the fill / outline popovers.
+ */
+const SWATCH_KEYS = [
+  "n", // navy
+  "s", // slate
+  "b", // ocean (blue)
+  "r", // crimson (red)
+  "e", // forest
+  "v", // violet
+  "w", // light (white)
+  "a", // amber
+  "o", // orange
+  "g", // green
+  "k", // sky
+  "p", // pink
+];
+
+/** The hotkey letter bound to / shown on the swatch at `index`, if any. */
+function hotkeyForSwatch(index: number): string | null {
+  return SWATCH_KEYS[index] ?? null;
+}
+
+/** Resolve a pressed character to the swatch color it selects, if any. */
+function swatchForKey(key: string): string | null {
+  const index = SWATCH_KEYS.indexOf(key.toLowerCase());
+  return index === -1 ? null : SWATCH_COLORS[index];
+}
+
 export interface SwatchPicker {
   /** the trigger element to drop into the style panel */
   el: HTMLElement;
   /** reflect an externally-changed color onto the trigger swatch */
   setValue(hex: string): void;
+  /** open the preset popover (no-op if already open) */
+  open(): void;
+  /** close the preset popover (no-op if already closed) */
+  close(): void;
+  /** open the popover if closed, close it if open */
+  toggle(): void;
+  /** whether the preset popover is currently shown */
+  isOpen(): boolean;
 }
 
 /** Paint a swatch element with a color, or the diagonal "no fill" indicator. */
@@ -40,10 +79,12 @@ function paintSwatch(el: HTMLElement, value: string): void {
 
 /**
  * A swatch button that opens a small popover of {@link SWATCH_COLORS} presets,
- * replacing the native `<input type="color">` OS picker. Picking a color fires
- * `onPick` and closes the popover; outside-click / Esc dismiss it. When
- * `transparent` is set, a leading "no fill" chip lets the shape render as
- * outline only.
+ * replacing the native `<input type="color">` OS picker. Each preset shows its
+ * letter hotkey in the corner; while the popover is open that key picks the
+ * matching color and closes it, taking priority over the canvas tool shortcuts.
+ * Picking a color fires `onPick` and closes the popover; outside-click / Esc
+ * dismiss it. When `transparent` is set, a leading "no fill" chip lets the shape
+ * render as outline only.
  */
 export function createSwatchPicker(opts: {
   title: string;
@@ -69,12 +110,31 @@ export function createSwatchPicker(opts: {
     if (pop && !wrap.contains(e.target as Node)) close();
   };
   const onDocKeyDown = (e: KeyboardEvent): void => {
-    if (e.key === "Escape" && pop) {
+    if (!pop) return;
+    if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
       close();
+      return;
+    }
+    // let editor/browser shortcuts (Cmd+R, etc.) through; only bare letters pick
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // a letter mapped to a swatch picks it and collapses the popover. Running in
+    // the capture phase + stopPropagation gives it priority over the canvas tool
+    // hotkeys (e.g. "r" picks red here instead of selecting the rectangle tool).
+    const value = swatchForKey(e.key);
+    if (value) {
+      e.preventDefault();
+      e.stopPropagation();
+      pick(value);
     }
   };
+
+  function pick(value: string): void {
+    setValue(value);
+    opts.onPick(value);
+    close();
+  }
 
   function close(): void {
     if (!pop) return;
@@ -86,22 +146,23 @@ export function createSwatchPicker(opts: {
   }
 
   function open(): void {
+    if (pop) return;
     pop = h("div", { class: "swatch-pop" }) as HTMLDivElement;
     for (const value of values) {
       const none = value === NO_FILL;
+      const key = none ? null : hotkeyForSwatch(SWATCH_COLORS.indexOf(value));
       const chip = h("button", {
         type: "button",
         class: "swatch-pop__chip",
-        title: none ? "No fill" : value,
+        title: none ? "No fill" : key ? `${value} (${key.toUpperCase()})` : value,
       });
       paintSwatch(chip, value);
       chip.classList.toggle("is-active", value.toLowerCase() === current.toLowerCase());
+      if (key) chip.appendChild(h("span", { class: "swatch-pop__key" }, key.toUpperCase()));
       chip.addEventListener("pointerdown", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        setValue(value);
-        opts.onPick(value);
-        close();
+        pick(value);
       });
       pop.appendChild(chip);
     }
@@ -109,6 +170,11 @@ export function createSwatchPicker(opts: {
     trigger.classList.add("is-open");
     document.addEventListener("pointerdown", onDocPointerDown, true);
     document.addEventListener("keydown", onDocKeyDown, true);
+  }
+
+  function toggle(): void {
+    if (pop) close();
+    else open();
   }
 
   function setValue(value: string): void {
@@ -119,9 +185,8 @@ export function createSwatchPicker(opts: {
   trigger.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (pop) close();
-    else open();
+    toggle();
   });
 
-  return { el: wrap, setValue };
+  return { el: wrap, setValue, open, close, toggle, isOpen: () => pop !== null };
 }

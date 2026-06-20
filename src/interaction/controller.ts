@@ -123,6 +123,8 @@ export class Controller {
   private menu: ContextMenu;
   private editOriginal = "";
   private subs: Array<() => void> = [];
+  /** Set by the UI so the `f` / `u` keys can open the fill / outline color popover it owns. */
+  onColorHotkey: ((target: "fill" | "stroke") => void) | null = null;
 
   constructor(private root: HTMLElement) {
     this.textEditor = new TextEditor(root);
@@ -743,6 +745,20 @@ export class Controller {
       scene.requestRender();
       return;
     }
+    // Enter on a single selected shape/edge starts label editing, like double-click
+    if (e.key === "Enter" && !meta) {
+      const sel = $selection.get();
+      if (sel.shapes.size === 1 && sel.edges.size === 0) {
+        e.preventDefault();
+        this.beginShapeText([...sel.shapes][0]);
+        return;
+      }
+      if (sel.edges.size === 1 && sel.shapes.size === 0) {
+        e.preventDefault();
+        this.beginEdgeLabel([...sel.edges][0]);
+        return;
+      }
+    }
     if ((e.key === "Backspace" || e.key === "Delete") && !meta) {
       e.preventDefault();
       actions.deleteSelection();
@@ -774,6 +790,12 @@ export class Controller {
       e.preventDefault();
       this.palette.open();
       return;
+    }
+    // "f" opens the fill color popover, "u" the outline one; the per-color letter
+    // keys that pick a swatch are handled by the popover itself while it's open.
+    if (!meta && !e.altKey && this.onColorHotkey) {
+      if (e.key === "f") return void this.onColorHotkey("fill");
+      if (e.key === "u") return void this.onColorHotkey("stroke");
     }
     // Text/label editing is started only by double-clicking the shape or line.
     if (!meta && !e.altKey) {

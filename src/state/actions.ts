@@ -88,7 +88,21 @@ export function updateShape(id: ID, patch: Partial<Shape>): void {
 }
 
 export function moveShapesBy(ids: Iterable<ID>, dx: number, dy: number): void {
-  for (const id of ids) {
+  const set = ids instanceof Set ? (ids as Set<ID>) : new Set(ids);
+  // A manual bend (cx/cy) is a FIXED world anchor, not derived from the shapes.
+  // When the whole edge (both endpoints) is part of the moved group, translate
+  // the bend too so curved connectors — and their labels, which sit on the
+  // curve midpoint — travel rigidly with the nodes instead of pivoting around a
+  // stale control point. Done before the shape loop so the refresh that
+  // updateNode triggers picks up the new control point.
+  for (const e of Object.values(doc.board.edges)) {
+    if (e.cx === undefined || e.cy === undefined) continue;
+    if (e.from === undefined || e.to === undefined) continue;
+    if (!set.has(e.from) || !set.has(e.to)) continue;
+    e.cx += dx;
+    e.cy += dy;
+  }
+  for (const id of set) {
     const s = doc.board.shapes[id];
     if (!s) continue;
     s.x += dx;
@@ -110,6 +124,23 @@ export function setShapesStyle(
     scene.updateNode(id);
   }
   bumpRevision();
+}
+
+/**
+ * Set the active fill/stroke color: update the board default ({@link $style}) so
+ * new shapes inherit it, and repaint the current selection. Stroke also recolors
+ * selected edges; fill does not (edges have no fill). Shared by the style-panel
+ * swatch pickers and the `1`–`0` color hotkeys.
+ */
+export function applyColor(target: "fill" | "stroke", color: string): void {
+  $style.set({ ...$style.get(), [target]: color });
+  const sel = $selection.get();
+  if (target === "fill") {
+    if (sel.shapes.size) setShapesStyle(sel.shapes, { fill: color });
+  } else {
+    if (sel.shapes.size) setShapesStyle(sel.shapes, { stroke: color });
+    for (const id of sel.edges) updateEdge(id, { stroke: color });
+  }
 }
 
 export function setShapeText(id: ID, text: string): void {
