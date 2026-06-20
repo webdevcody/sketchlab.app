@@ -19,6 +19,9 @@ export interface Shape {
   src?: string;
   /** label/text font size in world units; scales with the object on resize (defaults per kind) */
   fontSize?: number;
+  /** id of the group this shape belongs to; undefined when ungrouped. Members of a
+   *  group select, move, and delete together (Cmd+G / Cmd+U). */
+  group?: ID;
 }
 
 export interface Edge {
@@ -46,6 +49,8 @@ export interface Edge {
    */
   cx?: number;
   cy?: number;
+  /** id of the group this edge belongs to; undefined when ungrouped. */
+  group?: ID;
 }
 
 export interface Board {

@@ -8,6 +8,7 @@ import {
   quadPoints,
   rectIntersectsShape,
   resolveEdgeGeometry,
+  segIntersectsRect,
 } from "./geometry";
 import { createEdgeView, type EdgeView, updateEdgeView } from "./edgeView";
 import { createNodeView, type NodeView, updateNodeView } from "./shapeView";
@@ -270,6 +271,25 @@ class Scene {
     for (const id of doc.board.order) {
       const s = doc.board.shapes[id];
       if (s && rectIntersectsShape(rx0, ry0, rx1, ry1, s)) out.push(id);
+    }
+    return out;
+  }
+
+  edgesInRect(x0: number, y0: number, x1: number, y1: number): ID[] {
+    const rx0 = Math.min(x0, x1);
+    const ry0 = Math.min(y0, y1);
+    const rx1 = Math.max(x0, x1);
+    const ry1 = Math.max(y0, y1);
+    const out: ID[] = [];
+    for (const e of Object.values(doc.board.edges)) {
+      const geo = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, e);
+      const pts = geo.ctrl ? quadPoints(geo.p1, geo.ctrl, geo.p2, 14) : [geo.p1, geo.p2];
+      for (let i = 0; i < pts.length - 1; i++) {
+        if (segIntersectsRect(pts[i], pts[i + 1], rx0, ry0, rx1, ry1)) {
+          out.push(e.id);
+          break;
+        }
+      }
     }
     return out;
   }

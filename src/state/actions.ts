@@ -395,3 +395,87 @@ export function deleteSelection(): void {
     bumpRevision();
   }
 }
+
+// ---- grouping ----
+
+/**
+ * Grow a selection so that picking any member of a group pulls in the whole
+ * group. Shared by click and marquee selection so grouped objects act as one
+ * unit. Elements with no group are returned unchanged.
+ */
+export function expandSelectionGroups(
+  shapes: Iterable<ID>,
+  edges: Iterable<ID>,
+): { shapes: Set<ID>; edges: Set<ID> } {
+  const outShapes = new Set<ID>(shapes);
+  const outEdges = new Set<ID>(edges);
+  const groups = new Set<ID>();
+  for (const id of outShapes) {
+    const g = doc.board.shapes[id]?.group;
+    if (g) groups.add(g);
+  }
+  for (const id of outEdges) {
+    const g = doc.board.edges[id]?.group;
+    if (g) groups.add(g);
+  }
+  if (groups.size === 0) return { shapes: outShapes, edges: outEdges };
+  for (const s of Object.values(doc.board.shapes)) {
+    if (s.group && groups.has(s.group)) outShapes.add(s.id);
+  }
+  for (const e of Object.values(doc.board.edges)) {
+    if (e.group && groups.has(e.group)) outEdges.add(e.id);
+  }
+  return { shapes: outShapes, edges: outEdges };
+}
+
+/**
+ * The clicked element plus its group siblings — i.e. what a single click should
+ * select. An ungrouped element resolves to just itself.
+ */
+export function groupSiblings(id: ID): { shapes: ID[]; edges: ID[] } {
+  const isShape = doc.board.shapes[id] !== undefined;
+  const ex = expandSelectionGroups(isShape ? [id] : [], isShape ? [] : [id]);
+  return { shapes: [...ex.shapes], edges: [...ex.edges] };
+}
+
+/** Bind the current selection (2+ objects) into one new group, flattening any
+ *  prior group membership among the selected objects. */
+export function groupSelection(): void {
+  const sel = $selection.get();
+  if (sel.shapes.size + sel.edges.size < 2) return;
+  const gid = uid();
+  for (const id of sel.shapes) {
+    const s = doc.board.shapes[id];
+    if (s) s.group = gid;
+  }
+  for (const id of sel.edges) {
+    const e = doc.board.edges[id];
+    if (e) e.group = gid;
+  }
+  scene.requestRender();
+  bumpRevision();
+}
+
+/** Dissolve the group(s) of every selected object, leaving the objects selected. */
+export function ungroupSelection(): void {
+  const sel = $selection.get();
+  let changed = false;
+  for (const id of sel.shapes) {
+    const s = doc.board.shapes[id];
+    if (s?.group !== undefined) {
+      delete s.group;
+      changed = true;
+    }
+  }
+  for (const id of sel.edges) {
+    const e = doc.board.edges[id];
+    if (e?.group !== undefined) {
+      delete e.group;
+      changed = true;
+    }
+  }
+  if (changed) {
+    scene.requestRender();
+    bumpRevision();
+  }
+}

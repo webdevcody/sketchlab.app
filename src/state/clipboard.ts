@@ -49,11 +49,22 @@ export function pasteClipboard(): void {
   const d = PASTE_OFFSET * pasteCount;
 
   const idMap = new Map<string, string>();
+  // remap group ids so a pasted copy forms its own group, unlinked from the original
+  const groupMap = new Map<string, string>();
+  const remapGroup = (gid: string | undefined): string | undefined => {
+    if (gid === undefined) return undefined;
+    let n = groupMap.get(gid);
+    if (n === undefined) {
+      n = uid();
+      groupMap.set(gid, n);
+    }
+    return n;
+  };
   const newShapeIds: string[] = [];
   for (const s of clipShapes) {
     const nid = uid();
     idMap.set(s.id, nid);
-    doc.board.shapes[nid] = { ...s, id: nid, x: s.x + d, y: s.y + d };
+    doc.board.shapes[nid] = { ...s, id: nid, x: s.x + d, y: s.y + d, group: remapGroup(s.group) };
     doc.board.order.push(nid);
     scene.addNode(nid);
     newShapeIds.push(nid);
@@ -79,7 +90,7 @@ export function pasteClipboard(): void {
     if (skip) continue;
 
     const nid = uid();
-    const clone: Edge = { ...e, id: nid, from, to };
+    const clone: Edge = { ...e, id: nid, from, to, group: remapGroup(e.group) };
     // free endpoints move with the pasted copy so it doesn't sit on the original
     if (clone.from === undefined && clone.x1 !== undefined && clone.y1 !== undefined) {
       clone.x1 += d;

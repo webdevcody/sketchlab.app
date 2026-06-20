@@ -65,6 +65,52 @@ export function distToSegment(p: Pt, a: Pt, b: Pt): number {
   return Math.hypot(p.x - cx, p.y - cy);
 }
 
+/** Signed area sign of triangle abc (orientation test). */
+function cross(a: Pt, b: Pt, c: Pt): number {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+/** Do segments p1→p2 and p3→p4 properly cross? (ignores collinear-overlap). */
+function segIntersectsSeg(p1: Pt, p2: Pt, p3: Pt, p4: Pt): boolean {
+  const d1 = cross(p3, p4, p1);
+  const d2 = cross(p3, p4, p2);
+  const d3 = cross(p1, p2, p3);
+  const d4 = cross(p1, p2, p4);
+  return (
+    ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+    ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))
+  );
+}
+
+/** Does segment a→b touch or pass through the axis-aligned rect? */
+export function segIntersectsRect(
+  a: Pt,
+  b: Pt,
+  rx0: number,
+  ry0: number,
+  rx1: number,
+  ry1: number,
+): boolean {
+  // either endpoint inside the rect → hit (covers a segment fully contained)
+  if (
+    (a.x >= rx0 && a.x <= rx1 && a.y >= ry0 && a.y <= ry1) ||
+    (b.x >= rx0 && b.x <= rx1 && b.y >= ry0 && b.y <= ry1)
+  ) {
+    return true;
+  }
+  // otherwise the segment must cross one of the rect's four edges
+  const tl = { x: rx0, y: ry0 };
+  const tr = { x: rx1, y: ry0 };
+  const br = { x: rx1, y: ry1 };
+  const bl = { x: rx0, y: ry1 };
+  return (
+    segIntersectsSeg(a, b, tl, tr) ||
+    segIntersectsSeg(a, b, tr, br) ||
+    segIntersectsSeg(a, b, br, bl) ||
+    segIntersectsSeg(a, b, bl, tl)
+  );
+}
+
 /** Point on a quadratic bezier at parameter t (0 = start, 1 = end). */
 export function quadPointAt(a: Pt, ctrl: Pt, b: Pt, t: number): Pt {
   const mt = 1 - t;

@@ -61,7 +61,15 @@ type Gesture =
       cy: number;
       square: boolean;
     }
-  | { kind: "marquee"; sx: number; sy: number; cx: number; cy: number; base: Set<ID> }
+  | {
+      kind: "marquee";
+      sx: number;
+      sy: number;
+      cx: number;
+      cy: number;
+      base: Set<ID>;
+      baseEdges: Set<ID>;
+    }
   | { kind: "move"; lastWX: number; lastWY: number; moved: boolean }
   | {
       kind: "drawEdge";
@@ -248,11 +256,21 @@ export class Controller {
       this.menu.close();
       return;
     }
-    if (!$selection.get().shapes.has(hit)) setSelection([hit], []);
-    const ids = [...$selection.get().shapes];
+    if (!$selection.get().shapes.has(hit)) {
+      const m = actions.groupSiblings(hit);
+      setSelection(m.shapes, m.edges);
+    }
+    const sel = $selection.get();
+    const ids = [...sel.shapes];
+    const count = sel.shapes.size + sel.edges.size;
+    const hasGroup =
+      [...sel.shapes].some((id) => doc.board.shapes[id]?.group !== undefined) ||
+      [...sel.edges].some((id) => doc.board.edges[id]?.group !== undefined);
     this.menu.open(e.clientX, e.clientY, [
       { label: "Bring to Front", hint: "]", onSelect: () => actions.bringToFront(ids) },
       { label: "Send to Back", hint: "[", onSelect: () => actions.sendToBack(ids) },
+      { label: "Group", hint: "⌘G", disabled: count < 2, onSelect: () => actions.groupSelection() },
+      { label: "Ungroup", hint: "⌘U", disabled: !hasGroup, onSelect: () => actions.ungroupSelection() },
     ]);
   };
 
@@ -337,14 +355,18 @@ export class Controller {
 
     const hitShape = scene.hitTestShape(world);
     if (hitShape) {
+      // a click on a grouped object selects the whole group, not just the object
+      const m = actions.groupSiblings(hitShape);
       if (e.shiftKey) {
         const shapes = new Set(sel.shapes);
-        if (shapes.has(hitShape)) shapes.delete(hitShape);
-        else shapes.add(hitShape);
-        setSelection(shapes, sel.edges);
+        const edges = new Set(sel.edges);
+        const remove = shapes.has(hitShape);
+        for (const id of m.shapes) remove ? shapes.delete(id) : shapes.add(id);
+        for (const id of m.edges) remove ? edges.delete(id) : edges.add(id);
+        setSelection(shapes, edges);
         this.gesture = { kind: "none" };
       } else {
-        if (!sel.shapes.has(hitShape)) setSelection([hitShape], []);
+        if (!sel.shapes.has(hitShape)) setSelection(m.shapes, m.edges);
         this.gesture = { kind: "move", lastWX: world.x, lastWY: world.y, moved: false };
       }
       return;
@@ -352,14 +374,17 @@ export class Controller {
 
     const hitEdge = scene.hitTestEdge(world, this.worldTol(8));
     if (hitEdge) {
+      const m = actions.groupSiblings(hitEdge);
       if (e.shiftKey) {
+        const shapes = new Set(sel.shapes);
         const edges = new Set(sel.edges);
-        if (edges.has(hitEdge)) edges.delete(hitEdge);
-        else edges.add(hitEdge);
-        setSelection(sel.shapes, edges);
+        const remove = edges.has(hitEdge);
+        for (const id of m.shapes) remove ? shapes.delete(id) : shapes.add(id);
+        for (const id of m.edges) remove ? edges.delete(id) : edges.add(id);
+        setSelection(shapes, edges);
         this.gesture = { kind: "none" };
       } else {
-        if (!sel.edges.has(hitEdge)) setSelection([], [hitEdge]);
+        if (!sel.edges.has(hitEdge)) setSelection(m.shapes, m.edges);
         // drag translates a floating line (a fully shape-anchored edge won't move)
         this.gesture = { kind: "move", lastWX: world.x, lastWY: world.y, moved: false };
       }
@@ -374,6 +399,7 @@ export class Controller {
       cx: p.x,
       cy: p.y,
       base: new Set(e.shiftKey ? sel.shapes : []),
+      baseEdges: new Set(e.shiftKey ? sel.edges : []),
     };
     scene.requestRender();
   };
@@ -469,7 +495,12 @@ export class Controller {
         const ids = scene.shapesInRect(a.x, a.y, b.x, b.y);
         const merged = new Set(g.base);
         for (const id of ids) merged.add(id);
-        setSelection(merged, []);
+        const edgeIds = scene.edgesInRect(a.x, a.y, b.x, b.y);
+        const mergedEdges = new Set(g.baseEdges);
+        for (const id of edgeIds) mergedEdges.add(id);
+        // touching any group member selects the whole group
+        const ex = actions.expandSelectionGroups(merged, mergedEdges);
+        setSelection(ex.shapes, ex.edges);
       }
     }
     this.updateCursor();
@@ -724,6 +755,17 @@ export class Controller {
     if (meta && (e.key === "a" || e.key === "A")) {
       e.preventDefault();
       setSelection(Object.keys(doc.board.shapes), Object.keys(doc.board.edges));
+      return;
+    }
+    // Cmd/Ctrl+G groups the selection, Cmd/Ctrl+U ungroups it.
+    if (meta && !e.shiftKey && (e.key === "g" || e.key === "G")) {
+      e.preventDefault();
+      actions.groupSelection();
+      return;
+    }
+    if (meta && (e.key === "u" || e.key === "U")) {
+      e.preventDefault();
+      actions.ungroupSelection();
       return;
     }
 
@@ -1066,6 +1108,35 @@ export class Controller {
   private drawOverlay(g: Graphics): void {
     const sel = $selection.get();
 
+    // dashed bounds around each selected group, so grouped objects read as one unit
+    const groupBox = new Map<ID, { x0: number; y0: number; x1: number; y1: number }>();
+    const growGroup = (gid: ID, x0: number, y0: number, x1: number, y1: number): void => {
+      const b = groupBox.get(gid);
+      if (!b) groupBox.set(gid, { x0, y0, x1, y1 });
+      else {
+        b.x0 = Math.min(b.x0, x0);
+        b.y0 = Math.min(b.y0, y0);
+        b.x1 = Math.max(b.x1, x1);
+        b.y1 = Math.max(b.y1, y1);
+      }
+    };
+    for (const id of sel.shapes) {
+      const s = doc.board.shapes[id];
+      if (s?.group) growGroup(s.group, s.x, s.y, s.x + s.w, s.y + s.h);
+    }
+    for (const id of sel.edges) {
+      const e = doc.board.edges[id];
+      if (!e?.group) continue;
+      const geo = resolveEdgeGeometry(doc.board.edges, doc.board.shapes, e);
+      const pts = geo.ctrl ? [geo.p1, geo.ctrl, geo.p2] : [geo.p1, geo.p2];
+      for (const p of pts) growGroup(e.group, p.x, p.y, p.x, p.y);
+    }
+    for (const b of groupBox.values()) {
+      const tl = worldToScreen(b.x0, b.y0);
+      const br = worldToScreen(b.x1, b.y1);
+      this.strokeDashedRect(g, tl.x - 8, tl.y - 8, br.x - tl.x + 16, br.y - tl.y + 16);
+    }
+
     for (const id of sel.shapes) {
       const s = doc.board.shapes[id];
       if (!s) continue;
@@ -1151,6 +1222,27 @@ export class Controller {
         g.fill(ACCENT);
       }
     }
+  }
+
+  /** A dashed rectangle (screen space) — used to bracket a selected group. */
+  private strokeDashedRect(g: Graphics, x: number, y: number, w: number, h: number): void {
+    const dash = 6;
+    const gap = 4;
+    const line = (x1: number, y1: number, x2: number, y2: number): void => {
+      const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+      const ux = (x2 - x1) / len;
+      const uy = (y2 - y1) / len;
+      for (let d = 0; d < len; d += dash + gap) {
+        const end = Math.min(d + dash, len);
+        g.moveTo(x1 + ux * d, y1 + uy * d);
+        g.lineTo(x1 + ux * end, y1 + uy * end);
+      }
+    };
+    line(x, y, x + w, y);
+    line(x + w, y, x + w, y + h);
+    line(x + w, y + h, x, y + h);
+    line(x, y + h, x, y);
+    g.stroke({ width: 1.5, color: ACCENT, alpha: 0.9 });
   }
 
   /** A small square handle (screen space) drawn at a free edge endpoint. */
