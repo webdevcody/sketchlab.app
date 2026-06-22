@@ -17,7 +17,8 @@ export interface Shape {
   icon?: string;
   /** only for kind === "image": the image data URL (embedded so it persists & shares) */
   src?: string;
-  /** label/text font size in world units; scales with the object on resize (defaults per kind) */
+  /** label/text font size in world units; an absolute tier size, constant
+   *  regardless of the object's dimensions. Unset → follows the board default. */
   fontSize?: number;
   /** id of the group this shape belongs to; undefined when ungrouped. Members of a
    *  group select, move, and delete together (Cmd+G / Cmd+U). */
@@ -38,7 +39,7 @@ export interface Edge {
   y2?: number;
   stroke: string;
   label: string;
-  /** label font size in world units; follows board fontScale when unset */
+  /** label font size in world units; an absolute tier size. Unset → follows the board default. */
   fontSize?: number;
   /** when true, draw an arrowhead at the `to` end (directed edge) */
   directed?: boolean;
@@ -61,11 +62,12 @@ export interface Board {
   /** unified paint order (bottom -> top) of shape AND edge ids */
   order: ID[];
   /**
-   * Board-wide font multiplier (Small/Medium/Large/XLarge) applied to every
-   * object's label on top of its per-kind default. Objects with an explicit
-   * `Shape.fontSize` (individually sized) carry that absolute value instead.
-   * Undefined on legacy boards → treated as 1.
+   * Board-wide default label font size (world units), one of the S/M/L/XL/XXL
+   * tier sizes. Applies to every label without an explicit `fontSize`.
+   * Undefined → DEFAULT_FONT_SIZE (Medium).
    */
+  fontSize?: number;
+  /** @deprecated legacy board-wide font multiplier; migrated to `fontSize` on load. */
   fontScale?: number;
   createdAt: number;
   updatedAt: number;

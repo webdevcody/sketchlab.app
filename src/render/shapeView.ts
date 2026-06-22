@@ -7,38 +7,22 @@ import {
   type TextStyleOptions,
   Texture,
 } from "pixi.js";
-import type { Shape, ShapeKind } from "../state/types";
+import type { Shape } from "../state/types";
 import { doc } from "../state/store";
+import { DEFAULT_FONT_SIZE } from "./fontPresets";
 import { hexToNumber, NO_FILL, readableText } from "./geometry";
 import { drawIcon } from "./icons";
-import { TEXT_FONT_SIZE, TEXT_PAD } from "./measure";
+import { TEXT_PAD } from "./measure";
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
-/** caption font for an icon/image label, and the centered label inside a rect/circle */
-const ICON_LABEL_FONT = 16;
-const SHAPE_LABEL_FONT = 20;
-
-/** Default label font size (world units) for a shape kind, before any resize scaling. */
-export function defaultLabelFont(kind: ShapeKind): number {
-  if (kind === "text") return TEXT_FONT_SIZE;
-  if (kind === "icon" || kind === "image") return ICON_LABEL_FONT;
-  return SHAPE_LABEL_FONT; // rect / circle
-}
-
 /**
- * The label font (world units) a shape actually renders at. An explicit
- * `fontSize` (set by resizing or a per-object preset) wins; otherwise the
- * kind's default is multiplied by the board-wide font scale (S/M/L/XL).
+ * The label font (world units) a shape renders at: its explicit per-object tier
+ * size, else the board-wide default tier. The same size applies to every kind
+ * and stays constant regardless of the object's dimensions (no resize scaling).
  */
 export function effectiveFontSize(s: Shape): number {
-  if (s.fontSize != null) return s.fontSize;
-  return defaultLabelFont(s.kind) * (doc.board.fontScale ?? 1);
-}
-
-/** S/M/L/XL tier (0.75–2.25) implied by a shape's current label size. */
-export function shapeFontScale(s: Shape): number {
-  return effectiveFontSize(s) / defaultLabelFont(s.kind);
+  return s.fontSize ?? doc.board.fontSize ?? DEFAULT_FONT_SIZE;
 }
 
 export interface NodeView {

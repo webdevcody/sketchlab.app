@@ -1,22 +1,17 @@
 import { Container, Graphics, Text, type TextStyleOptions } from "pixi.js";
 import { doc } from "../state/store";
 import type { Edge, ID } from "../state/types";
+import { DEFAULT_FONT_SIZE } from "./fontPresets";
 import { type EdgeGeometry, hexToNumber } from "./geometry";
 
 const FONT = "system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif";
 
-/** Default edge/arrow label font size (world units), before any resize scaling. */
-export const EDGE_LABEL_FONT = 14;
-
-/** The label font (world units) an edge actually renders at. */
+/**
+ * The label font (world units) an edge renders at: its explicit per-object tier
+ * size, else the board-wide default tier — the same tier sizes shapes use.
+ */
 export function effectiveEdgeFontSize(e: Edge): number {
-  if (e.fontSize != null) return e.fontSize;
-  return EDGE_LABEL_FONT * (doc.board.fontScale ?? 1);
-}
-
-/** S/M/L/XL tier implied by an edge's current label size. */
-export function edgeFontScale(e: Edge): number {
-  return effectiveEdgeFontSize(e) / EDGE_LABEL_FONT;
+  return e.fontSize ?? doc.board.fontSize ?? DEFAULT_FONT_SIZE;
 }
 
 export interface EdgeView {

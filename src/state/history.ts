@@ -22,7 +22,7 @@ export const $canRedo = atom(false);
 
 function snapshot(): string {
   const b = doc.board;
-  return JSON.stringify({ shapes: b.shapes, edges: b.edges, order: b.order, fontScale: b.fontScale });
+  return JSON.stringify({ shapes: b.shapes, edges: b.edges, order: b.order, fontSize: b.fontSize });
 }
 
 function updateFlags(): void {
@@ -56,11 +56,11 @@ function flushPending(): void {
 }
 
 function restore(snap: string): void {
-  const data = JSON.parse(snap) as Pick<typeof doc.board, "shapes" | "edges" | "order" | "fontScale">;
+  const data = JSON.parse(snap) as Pick<typeof doc.board, "shapes" | "edges" | "order" | "fontSize">;
   doc.board.shapes = data.shapes;
   doc.board.edges = data.edges;
   doc.board.order = data.order;
-  doc.board.fontScale = data.fontScale;
+  doc.board.fontSize = data.fontSize;
   setSelection([], []);
   scene.rebuild();
 }

@@ -5,8 +5,8 @@ import { saveNow, startAutosave, stopAutosave } from "../persistence/autosave";
 import { saveBoard } from "../persistence/db";
 import { shareUrl } from "../persistence/share";
 import { scene } from "../render/scene";
-import { edgeFontScale } from "../render/edgeView";
-import { shapeFontScale } from "../render/shapeView";
+import { effectiveEdgeFontSize } from "../render/edgeView";
+import { effectiveFontSize } from "../render/shapeView";
 import * as actions from "../state/actions";
 import { $canRedo, $canUndo, disposeHistory, initHistory, redo, undo } from "../state/history";
 import { $camera, $revision, $selection, $style, $tool, doc } from "../state/store";
@@ -15,16 +15,20 @@ import { clear, h, toast } from "./dom";
 import { navigate } from "./nav";
 import { createSwatchPicker } from "./swatchPicker";
 
-import { FONT_EPS, FONT_PRESET_SCALES } from "../render/fontPresets";
+import {
+  DEFAULT_FONT_SIZE,
+  FONT_EPS,
+  FONT_LABELS,
+  FONT_SIZES,
+  FONT_TITLES,
+} from "../render/fontPresets";
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
-const FONT_PRESET_LABELS = ["S", "M", "L", "XL"] as const;
-const FONT_PRESET_TITLES = ["Small font", "Medium font", "Large font", "Extra-large font"] as const;
-const FONT_PRESETS = FONT_PRESET_SCALES.map((scale, i) => ({
-  label: FONT_PRESET_LABELS[i],
-  scale,
-  title: FONT_PRESET_TITLES[i],
+const FONT_PRESETS = FONT_SIZES.map((size, i) => ({
+  label: FONT_LABELS[i],
+  size,
+  title: FONT_TITLES[i],
 }));
 
 function svg(inner: string): string {
@@ -265,10 +269,10 @@ export async function mountEditor(
         onclick: () => {
           const sel = $selection.get();
           if (sel.shapes.size || sel.edges.size) {
-            if (sel.shapes.size) actions.setShapesFontPreset(sel.shapes, p.scale);
-            if (sel.edges.size) actions.setEdgesFontPreset(sel.edges, p.scale);
+            if (sel.shapes.size) actions.setShapesFontSize(sel.shapes, p.size);
+            if (sel.edges.size) actions.setEdgesFontSize(sel.edges, p.size);
           } else {
-            actions.setFontScale(p.scale);
+            actions.setBoardFontSize(p.size);
           }
         },
       },
@@ -277,8 +281,8 @@ export async function mountEditor(
   );
   const fontSeg = h("div", { class: "seg" }, ...fontBtns);
 
-  /** The scale the panel should highlight: the selection's shared scale, else the board default. */
-  const activeFontScale = (): number | null => {
+  /** The tier size the panel should highlight: the selection's shared size, else the board default. */
+  const activeFontSize = (): number | null => {
     const sel = $selection.get();
     const shapeIds = [...sel.shapes];
     const edgeIds = [...sel.edges];
@@ -287,25 +291,25 @@ export async function mountEditor(
       for (const id of shapeIds) {
         const s = doc.board.shapes[id];
         if (!s) continue;
-        const r = shapeFontScale(s);
+        const r = effectiveFontSize(s);
         if (shared === null) shared = r;
         else if (Math.abs(shared - r) > FONT_EPS) return null; // mixed selection
       }
       for (const id of edgeIds) {
         const e = doc.board.edges[id];
         if (!e) continue;
-        const r = edgeFontScale(e);
+        const r = effectiveEdgeFontSize(e);
         if (shared === null) shared = r;
         else if (Math.abs(shared - r) > FONT_EPS) return null; // mixed selection
       }
       return shared;
     }
-    return doc.board.fontScale ?? 1;
+    return doc.board.fontSize ?? DEFAULT_FONT_SIZE;
   };
   const syncFont = () => {
-    const cur = activeFontScale();
+    const cur = activeFontSize();
     fontBtns.forEach((b, i) =>
-      b.classList.toggle("is-active", cur != null && Math.abs(FONT_PRESETS[i].scale - cur) < FONT_EPS),
+      b.classList.toggle("is-active", cur != null && Math.abs(FONT_PRESETS[i].size - cur) < FONT_EPS),
     );
   };
   unsubs.push($revision.subscribe(syncFont));

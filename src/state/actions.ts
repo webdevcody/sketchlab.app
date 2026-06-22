@@ -1,7 +1,7 @@
-import { stepFontScale } from "../render/fontPresets";
-import { clampFont, measureTextBox } from "../render/measure";
-import { EDGE_LABEL_FONT, edgeFontScale } from "../render/edgeView";
-import { defaultLabelFont, effectiveFontSize, shapeFontScale } from "../render/shapeView";
+import { DEFAULT_FONT_SIZE, snapFontSize, stepFontSize } from "../render/fontPresets";
+import { measureTextBox } from "../render/measure";
+import { effectiveEdgeFontSize } from "../render/edgeView";
+import { effectiveFontSize } from "../render/shapeView";
 import { scene } from "../render/scene";
 import { uid } from "../util";
 import {
@@ -36,9 +36,29 @@ function normalizeOrder(board: Board): ID[] {
   return [...missingEdges, ...kept, ...missingShapes];
 }
 
+/**
+ * Migrate legacy font data to the absolute-tier model: the old board-wide
+ * multiplier (`fontScale`) becomes an absolute default, and every per-object
+ * `fontSize` is snapped to its nearest tier so prior free-resizes render at a
+ * consistent size instead of an arbitrary one.
+ */
+function normalizeFonts(board: Board): void {
+  if (board.fontSize == null && board.fontScale != null) {
+    board.fontSize = snapFontSize(board.fontScale * DEFAULT_FONT_SIZE);
+  }
+  delete board.fontScale;
+  for (const s of Object.values(board.shapes)) {
+    if (s.fontSize != null) s.fontSize = snapFontSize(s.fontSize);
+  }
+  for (const e of Object.values(board.edges)) {
+    if (e.fontSize != null) e.fontSize = snapFontSize(e.fontSize);
+  }
+}
+
 /** Replace the active document and rebuild the scene from scratch. */
 export function loadBoard(board: Board): void {
   board.order = normalizeOrder(board);
+  normalizeFonts(board);
   doc.board = board;
   $boardName.set(board.name);
   setSelection([], []);
@@ -171,12 +191,12 @@ function reflowTextBox(s: Shape): void {
 }
 
 /**
- * Set the board-wide font scale (Small/Medium/Large/XLarge). Only objects
- * without an explicit `fontSize` follow the new scale; per-object overrides
- * (from a preset click or resize) are left unchanged.
+ * Set the board-wide default font size (one of the S/M/L/XL/XXL tiers). Only
+ * objects without an explicit `fontSize` follow it; per-object overrides (from a
+ * preset click) are left unchanged.
  */
-export function setFontScale(scale: number): void {
-  doc.board.fontScale = scale;
+export function setBoardFontSize(size: number): void {
+  doc.board.fontSize = size;
   for (const s of Object.values(doc.board.shapes)) {
     if (s.fontSize != null) continue;
     if (s.kind === "text") reflowTextBox(s);
@@ -190,55 +210,53 @@ export function setFontScale(scale: number): void {
 }
 
 /**
- * Apply a font preset to specific objects only (individual modification): pins
- * each to an explicit `fontSize` of its kind default × scale. These objects then
- * keep that size independent of the board default until resized again.
+ * Pin specific shapes to an absolute tier font size (individual override). The
+ * same size applies to every kind; objects keep it independent of the board
+ * default.
  */
-export function setShapesFontPreset(ids: Iterable<ID>, scale: number): void {
+export function setShapesFontSize(ids: Iterable<ID>, size: number): void {
   for (const id of ids) {
     const s = doc.board.shapes[id];
     if (!s) continue;
-    s.fontSize = clampFont(defaultLabelFont(s.kind) * scale);
+    s.fontSize = size;
     if (s.kind === "text") reflowTextBox(s);
     scene.updateNode(id);
   }
   bumpRevision();
 }
 
-/** Apply a font preset to selected edges (lines/arrows). */
-export function setEdgesFontPreset(ids: Iterable<ID>, scale: number): void {
+/** Pin selected edges (lines/arrows) to an absolute tier font size. */
+export function setEdgesFontSize(ids: Iterable<ID>, size: number): void {
   for (const id of ids) {
     const e = doc.board.edges[id];
     if (!e) continue;
-    e.fontSize = clampFont(EDGE_LABEL_FONT * scale);
+    e.fontSize = size;
     scene.updateEdge(id);
   }
   bumpRevision();
 }
 
-/** Bump font size one preset tier for the selection, or the board default when empty. */
+/** Bump font size one tier for the selection, or the board default when empty. */
 export function adjustFontSize(dir: 1 | -1): void {
   const { shapes, edges } = $selection.get();
   if (shapes.size || edges.size) {
     for (const id of shapes) {
       const s = doc.board.shapes[id];
       if (!s) continue;
-      const scale = stepFontScale(shapeFontScale(s), dir);
-      s.fontSize = clampFont(defaultLabelFont(s.kind) * scale);
+      s.fontSize = stepFontSize(effectiveFontSize(s), dir);
       if (s.kind === "text") reflowTextBox(s);
       scene.updateNode(id);
     }
     for (const id of edges) {
       const e = doc.board.edges[id];
       if (!e) continue;
-      const scale = stepFontScale(edgeFontScale(e), dir);
-      e.fontSize = clampFont(EDGE_LABEL_FONT * scale);
+      e.fontSize = stepFontSize(effectiveEdgeFontSize(e), dir);
       scene.updateEdge(id);
     }
     bumpRevision();
     return;
   }
-  setFontScale(stepFontScale(doc.board.fontScale ?? 1, dir));
+  setBoardFontSize(stepFontSize(doc.board.fontSize ?? DEFAULT_FONT_SIZE, dir));
 }
 
 export function deleteShape(id: ID): void {

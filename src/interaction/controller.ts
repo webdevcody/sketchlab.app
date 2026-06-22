@@ -23,7 +23,8 @@ import {
   setSelection,
 } from "../state/store";
 import type { ID, Shape } from "../state/types";
-import { MAX_FONT, measureTextBox, MIN_FONT, TEXT_FONT_SIZE, TEXT_PAD } from "../render/measure";
+import { DEFAULT_FONT_SIZE, snapFontSize } from "../render/fontPresets";
+import { measureTextBox, TEXT_PAD } from "../render/measure";
 import { panBy, zoomAt } from "./camera";
 import { ContextMenu } from "./contextMenu";
 import { IconPalette } from "./iconPalette";
@@ -639,19 +640,16 @@ export class Controller {
       nx = world.x < fx ? fx - nw : fx;
     }
 
-    const patch: Partial<Shape> = { x: nx, y: ny, w: nw, h: nh };
-    // scale the label with the object's height (an edge-only width drag keeps it)
-    if (s.text && s.h > 0) {
-      const base = effectiveFontSize(s);
-      patch.fontSize = Math.min(MAX_FONT, Math.max(MIN_FONT, base * (nh / s.h)));
-    }
-    actions.updateShape(id, patch);
+    // Label font is a fixed tier size — it stays constant as the box resizes
+    // (set the size via the toolbar presets or the +/- keys, not by dragging).
+    actions.updateShape(id, { x: nx, y: ny, w: nw, h: nh });
   }
 
   /**
-   * Resize a text object by scaling its font size. Text boxes are content-sized,
-   * so dragging a handle scales the font (the box re-measures to fit) while the
-   * side opposite the dragged handle stays pinned.
+   * Resize a text object by snapping its font to the nearest tier. Text boxes are
+   * content-sized, so dragging a handle steps the font through the S/M/L/XL/XXL
+   * tiers (the box re-measures to fit) while the side opposite the dragged handle
+   * stays pinned — the result is always one of the consistent tier sizes.
    */
   private applyTextResize(id: ID, handle: number, world: Pt): void {
     const s = doc.board.shapes[id];
@@ -678,7 +676,7 @@ export class Controller {
       k = Math.abs(world.x - fx) / s.w;
     }
 
-    const nf = Math.min(MAX_FONT, Math.max(MIN_FONT, curFont * k));
+    const nf = snapFontSize(curFont * k);
     const box = measureTextBox(s.text, nf);
 
     // pin the side opposite the dragged handle
@@ -868,8 +866,8 @@ export class Controller {
   private placeText(wx: number, wy: number): void {
     // size the shape to the real text metrics so the selection box matches the
     // editor overlay (a hardcoded box wouldn't line up with the auto-grown editor).
-    // Measure at the board's current font scale so a fresh text box isn't medium-sized.
-    const box = measureTextBox("", TEXT_FONT_SIZE * (doc.board.fontScale ?? 1));
+    // Measure at the board's default tier so a fresh text box matches it.
+    const box = measureTextBox("", doc.board.fontSize ?? DEFAULT_FONT_SIZE);
     const shape = actions.createShape("text", wx, wy, box.w, box.h, {
       fill: "#e2e8f0",
       stroke: "#e2e8f0",
