@@ -479,6 +479,13 @@ button {
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   z-index: 20;
 }
+/* portaled into <body>: positioned via inline left/top from the trigger's rect */
+.swatch-pop--portal {
+  position: fixed;
+  bottom: auto;
+  transform: none;
+  z-index: 1000;
+}
 .swatch-pop__chip {
   width: 26px;
   height: 26px;
@@ -1048,6 +1055,19 @@ button {
 }
 .layers-panel__item.is-hidden .layers-panel__eye {
   color: var(--muted);
+}
+/* per-floor color key: a compact round swatch that opens the accent picker */
+.layers-panel__color {
+  flex: 0 0 auto;
+}
+.layers-panel__color .swatch {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  box-shadow: 0 0 7px rgba(56, 189, 248, 0.25);
+}
+.layers-panel__item.is-hidden .layers-panel__color {
+  opacity: 0.5;
 }
 .layers-panel__meta {
   min-width: 0;

@@ -24,6 +24,25 @@ export const SWATCH_COLORS = [
   "#f9a8d4", // pink
 ];
 
+/**
+ * Neon-friendly accent palette for board FLOORS (layers panel). These are bright,
+ * saturated hues — unlike {@link SWATCH_COLORS} (shape fills, half of them dark) —
+ * because a floor's color drives a glowing frame, so it must read at low alpha.
+ * The first entry is the cyan default so an unset floor shows as selected.
+ */
+export const LAYER_ACCENTS = [
+  "#38bdf8", // cyan (default)
+  "#22d3ee", // aqua
+  "#4ade80", // green
+  "#a3e635", // lime
+  "#fbbf24", // amber
+  "#fb923c", // orange
+  "#f87171", // red
+  "#f472b6", // pink
+  "#c084fc", // violet
+  "#818cf8", // indigo
+];
+
 export interface SwatchPicker {
   /** the trigger element to drop into the style panel */
   el: HTMLElement;
@@ -49,11 +68,21 @@ export function createSwatchPicker(opts: {
   title: string;
   initial: string;
   transparent?: boolean;
+  /** override the preset palette (defaults to {@link SWATCH_COLORS}) */
+  colors?: string[];
+  /**
+   * Render the popover into <body> with fixed positioning instead of absolutely
+   * inside the trigger's wrapper. Use when the trigger lives in a scroll/overflow
+   * container (e.g. the layers panel list) that would otherwise clip the popover.
+   */
+  portal?: boolean;
   onPick: (value: string) => void;
 }): SwatchPicker {
   let current = opts.initial;
   let pop: HTMLDivElement | null = null;
-  const values = opts.transparent ? [NO_FILL, ...SWATCH_COLORS] : SWATCH_COLORS;
+  let onScroll: (() => void) | null = null;
+  const base = opts.colors ?? SWATCH_COLORS;
+  const values = opts.transparent ? [NO_FILL, ...base] : base;
 
   const trigger = h("button", {
     type: "button",
@@ -66,7 +95,9 @@ export function createSwatchPicker(opts: {
   const wrap = h("div", { class: "swatch-wrap" }, trigger);
 
   const onDocPointerDown = (e: PointerEvent): void => {
-    if (pop && !wrap.contains(e.target as Node)) close();
+    const t = e.target as Node;
+    // a portaled popover lives outside `wrap`, so also keep clicks inside `pop`
+    if (pop && !wrap.contains(t) && !pop.contains(t)) close();
   };
   const onDocKeyDown = (e: KeyboardEvent): void => {
     if (e.key === "Escape" && pop) {
@@ -80,13 +111,35 @@ export function createSwatchPicker(opts: {
     if (!pop) return;
     document.removeEventListener("pointerdown", onDocPointerDown, true);
     document.removeEventListener("keydown", onDocKeyDown, true);
+    if (onScroll) {
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onScroll);
+      onScroll = null;
+    }
     pop.remove();
     pop = null;
     trigger.classList.remove("is-open");
   }
 
+  /** Anchor a portaled popover above (or, if it would clip, below) the trigger. */
+  function positionPortal(): void {
+    if (!pop) return;
+    const r = trigger.getBoundingClientRect();
+    const pr = pop.getBoundingClientRect();
+    const margin = 8;
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const left = Math.max(margin, Math.min(r.left + r.width / 2 - pr.width / 2, vw - pr.width - margin));
+    let top = r.top - pr.height - 10; // prefer above the trigger
+    if (top < margin) top = Math.min(r.bottom + 10, vh - pr.height - margin); // flip below
+    pop.style.left = `${Math.round(left)}px`;
+    pop.style.top = `${Math.round(top)}px`;
+  }
+
   function open(): void {
-    pop = h("div", { class: "swatch-pop" }) as HTMLDivElement;
+    pop = h("div", {
+      class: opts.portal ? "swatch-pop swatch-pop--portal" : "swatch-pop",
+    }) as HTMLDivElement;
     for (const value of values) {
       const none = value === NO_FILL;
       const chip = h("button", {
@@ -105,7 +158,16 @@ export function createSwatchPicker(opts: {
       });
       pop.appendChild(chip);
     }
-    wrap.appendChild(pop);
+    if (opts.portal) {
+      document.body.appendChild(pop);
+      positionPortal();
+      // a scroll/resize moves the anchor out from under the popover — just dismiss
+      onScroll = () => close();
+      window.addEventListener("scroll", onScroll, true);
+      window.addEventListener("resize", onScroll);
+    } else {
+      wrap.appendChild(pop);
+    }
     trigger.classList.add("is-open");
     document.addEventListener("pointerdown", onDocPointerDown, true);
     document.addEventListener("keydown", onDocKeyDown, true);

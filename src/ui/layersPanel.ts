@@ -1,8 +1,10 @@
 import { getFloorSpacing, setFloorSpacing } from "../interaction/camera";
+import { DEFAULT_FLOOR_COLOR } from "../render/boardLayers";
 import { MAX_FLOOR_STEP, MIN_FLOOR_STEP } from "../render/shading";
 import * as actions from "../state/actions";
 import { $activeLayer, $floorSpacing, $revision, $selection, doc } from "../state/store";
 import { h, toast } from "./dom";
+import { createSwatchPicker, LAYER_ACCENTS } from "./swatchPicker";
 
 function svg(inner: string): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
@@ -18,6 +20,16 @@ const ICON_COLLAPSE = svg('<path d="M9 6l6 6-6 6"/>');
 
 export interface LayersPanelOptions {
   onCollapseChange?: (collapsed: boolean) => void;
+}
+
+/** One rendered floor row in the panel (high→low). */
+interface FloorRow {
+  index: number;
+  name: string;
+  count: number;
+  hidden: boolean;
+  /** the floor's accent color, or undefined to fall back to the cyan default */
+  color?: string;
 }
 
 /**
@@ -133,7 +145,7 @@ export class LayersPanel {
   }
 
   /** Floors to show, high→low. Synthesizes a single "Ground" row for empty boards. */
-  private floorRows(): Array<{ index: number; name: string; count: number; hidden: boolean }> {
+  private floorRows(): Array<FloorRow> {
     const layers = doc.board.layers ?? [];
     const counts: number[] = [];
     let maxL = 0;
@@ -143,13 +155,14 @@ export class LayersPanel {
       if (l > maxL) maxL = l;
     }
     const n = Math.max(layers.length, maxL + 1, 1);
-    const rows: Array<{ index: number; name: string; count: number; hidden: boolean }> = [];
+    const rows: FloorRow[] = [];
     for (let i = n - 1; i >= 0; i--) {
       rows.push({
         index: i,
         name: layers[i]?.name ?? (i === 0 ? "Ground" : `Layer ${i}`),
         count: counts[i] ?? 0,
         hidden: !!layers[i]?.hidden,
+        color: layers[i]?.color,
       });
     }
     return rows;
@@ -206,12 +219,25 @@ export class LayersPanel {
   }
 
   private row(
-    row: { index: number; name: string; count: number; hidden: boolean },
+    row: FloorRow,
     active: number,
     hasSelection: boolean,
     total: number,
   ): HTMLElement {
     const i = row.index;
+
+    // floor color key — opens a portaled accent picker (the panel list scrolls, so
+    // the popover must escape its overflow). Picking recolors this floor's frame,
+    // active plate & badge. Stop the click from also re-activating the row.
+    const colorPicker = createSwatchPicker({
+      title: "Floor color",
+      initial: row.color ?? DEFAULT_FLOOR_COLOR,
+      colors: LAYER_ACCENTS,
+      portal: true,
+      onPick: (value) => actions.setLayerColor(i, value),
+    });
+    colorPicker.el.classList.add("layers-panel__color");
+    colorPicker.el.addEventListener("click", (e) => e.stopPropagation());
 
     const eyeBtn = h(
       "button",
@@ -298,6 +324,7 @@ export class LayersPanel {
         },
       },
       eyeBtn,
+      colorPicker.el,
       h(
         "div",
         { class: "layers-panel__meta" },

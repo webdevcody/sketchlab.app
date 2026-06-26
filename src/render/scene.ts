@@ -1,7 +1,7 @@
 import { Application, Container, Graphics, Text } from "pixi.js";
 import { $camera, doc } from "../state/store";
 import type { Edge, ID, Shape } from "../state/types";
-import { drawBoard, type GridBounds } from "./boardLayers";
+import { DEFAULT_FLOOR_COLOR, drawBoard, type GridBounds } from "./boardLayers";
 import {
   createEdgeView,
   type EdgeView,
@@ -12,6 +12,7 @@ import {
 import {
   type Pt,
   distToSegment,
+  hexToNumber,
   quadPoints,
   resolveEdgeGeometry,
 } from "./geometry";
@@ -187,6 +188,11 @@ class Scene {
     return Array.from({ length: this.floorCount() }, (_, i) => !!doc.board.layers?.[i]?.hidden);
   }
 
+  /** Per-floor accent color (bottom→top); undefined falls back to cyan in drawFloor. */
+  private floorColors(): Array<string | undefined> {
+    return Array.from({ length: this.floorCount() }, (_, i) => doc.board.layers?.[i]?.color);
+  }
+
   /** Whether floor `i` is hidden via its LayerDef. */
   private isFloorHidden(i: number): boolean {
     return !!doc.board.layers?.[i]?.hidden;
@@ -204,15 +210,21 @@ class Scene {
 
   private redrawBoardLayer(): void {
     const b = this.boardBounds();
-    drawBoard(this.boardGfx, getActiveProjector(), b, this.floorElevations(), this.activeLayer, this.hiddenFloors());
+    drawBoard(this.boardGfx, getActiveProjector(), b, this.floorElevations(), this.activeLayer, this.hiddenFloors(), this.floorColors());
     this.syncFloorBadges(b);
     this.lastBoardBounds = b;
   }
 
-  /** Re-evaluate floor visibility after a hide/show toggle: repaint frames & badges, then redraw items. */
-  refreshLayerVisibility(): void {
+  /** Repaint the board frames/plates + floor badges, then schedule a render. Used
+   *  after a per-floor change (color, name) that alters the board chrome. */
+  redrawBoard(): void {
     this.redrawBoardLayer();
     this.requestRender();
+  }
+
+  /** Re-evaluate floor visibility after a hide/show toggle: repaint frames & badges, then redraw items. */
+  refreshLayerVisibility(): void {
+    this.redrawBoard();
   }
 
   /**
@@ -234,7 +246,7 @@ class Scene {
     ) {
       return;
     }
-    drawBoard(this.boardGfx, getActiveProjector(), b, this.floorElevations(), this.activeLayer, this.hiddenFloors());
+    drawBoard(this.boardGfx, getActiveProjector(), b, this.floorElevations(), this.activeLayer, this.hiddenFloors(), this.floorColors());
     this.syncFloorBadges(b);
     this.lastBoardBounds = b;
   }
@@ -342,6 +354,7 @@ class Scene {
       }
       bd.container.visible = true;
       const active = i === this.activeLayer;
+      const accent = hexToNumber(doc.board.layers?.[i]?.color ?? DEFAULT_FLOOR_COLOR);
       bd.text.text = name.toUpperCase();
       bd.text.alpha = active ? 1 : 0.55;
       const padX = 9;
@@ -352,7 +365,9 @@ class Scene {
       bd.gfx.roundRect(0, -h / 2, w, h, 6);
       bd.gfx.fill({ color: active ? 0x0c2740 : 0x091622, alpha: 0.92 });
       bd.gfx.roundRect(0, -h / 2, w, h, 6);
-      bd.gfx.stroke({ width: 1.2, color: active ? 0x38bdf8 : 0x1f3a52, alpha: active ? 0.95 : 0.6 });
+      // active badge takes the floor's accent; inactive ones stay a muted slate so
+      // the badge↔frame color link only shouts on the floor you're editing
+      bd.gfx.stroke({ width: 1.2, color: active ? accent : 0x1f3a52, alpha: active ? 0.95 : 0.6 });
       bd.text.position.set(padX, 0);
       // recede the badge with floor distance, but keep a high floor so far
       // labels stay readable for navigation

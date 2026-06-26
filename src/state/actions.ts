@@ -336,6 +336,16 @@ export function renameLayer(index: number, name: string): void {
   bumpRevision();
 }
 
+/** Set a floor's accent color (drives its frame, active plate, badge & panel swatch). */
+export function setLayerColor(index: number, color: string): void {
+  const layers = materializeLayers();
+  const L = layers[index];
+  if (!L || L.color === color) return;
+  L.color = color;
+  scene.redrawBoard(); // repaint the frames/plates + badges immediately
+  bumpRevision(); // refresh the layers panel row swatches
+}
+
 /** Remove a floor: shapes on it drop to the floor below, higher shapes re-index down. */
 export function deleteLayer(index: number): void {
   const layers = doc.board.layers;
