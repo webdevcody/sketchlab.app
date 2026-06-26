@@ -12,12 +12,12 @@ import type { Camera } from "../state/types";
 import { clamp } from "../util";
 import { screenToWorld } from "./viewport";
 
-const MIN_ZOOM = 0.05;
+const MIN_ZOOM = 0.01;
 const MAX_ZOOM = 6;
 const MIN_DISTANCE = 500;
-const BASE_MAX_DISTANCE = 4800; // dolly ceiling for a single-floor board
+const BASE_MAX_DISTANCE = 120000; // dolly ceiling for a single-floor board (reaches MIN_ZOOM)
 const MAX_DISTANCE_PER_FLOOR = 1200; // extra pull-back room each stacked floor adds…
-const MAX_DISTANCE_CAP = 24000; // …up to here, where DEFAULT_DISTANCE / cap === MIN_ZOOM
+const MAX_DISTANCE_CAP = 120000; // …up to here, where DEFAULT_DISTANCE / cap === MIN_ZOOM
 const MIN_PITCH = 0.05;
 const MAX_PITCH = (85 * Math.PI) / 180; // keep the horizon out of the working field
 const DEFAULT_PITCH = (60 * Math.PI) / 180; // 30deg tilted from directly above

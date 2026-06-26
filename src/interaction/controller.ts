@@ -144,6 +144,8 @@ export class Controller {
   private menu: ContextMenu;
   private editOriginal = "";
   private subs: Array<() => void> = [];
+  /** Last canvas-local pointer position, so a keyboard paste can target the cursor. */
+  private lastPointer: Pt | null = null;
 
   constructor(private root: HTMLElement) {
     this.textEditor = new TextEditor(root);
@@ -307,6 +309,7 @@ export class Controller {
     this.textEditor.commit();
     this.root.setPointerCapture(e.pointerId);
     const p = this.local(e);
+    this.lastPointer = p;
     const world = screenToWorld(p.x, p.y);
     const tool = $tool.get();
 
@@ -445,6 +448,7 @@ export class Controller {
   private onPointerMove = (e: PointerEvent): void => {
     const g = this.gesture;
     const p = this.local(e);
+    this.lastPointer = p;
     if (g.kind === "none") {
       this.updateHoverCursor(p);
       return;
@@ -840,7 +844,12 @@ export class Controller {
     }
     if (meta && (e.key === "v" || e.key === "V")) {
       e.preventDefault();
-      pasteClipboard();
+      // center the paste under the cursor; fall back to a cascade when the
+      // pointer is unknown or above the horizon (no ground point to land on)
+      const at = this.lastPointer
+        ? screenToWorld(this.lastPointer.x, this.lastPointer.y)
+        : null;
+      pasteClipboard(at ?? undefined);
       return;
     }
     if (meta && (e.key === "a" || e.key === "A")) {

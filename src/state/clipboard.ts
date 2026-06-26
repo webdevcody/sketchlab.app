@@ -1,3 +1,4 @@
+import type { Pt } from "../render/geometry";
 import { scene } from "../render/scene";
 import { uid } from "../util";
 import { deleteSelection } from "./actions";
@@ -42,18 +43,67 @@ export function cutSelection(): void {
   deleteSelection();
 }
 
-/** Paste a fresh copy of the clipboard, cascaded so repeats don't stack exactly. */
-export function pasteClipboard(): void {
+/**
+ * The center of the clipboard's bounding box in world space — spanning every
+ * copied shape plus any free (unanchored) edge endpoints. Returns null when the
+ * clipboard holds nothing positionable. Used to recenter a paste on the cursor.
+ */
+function clipboardCenter(): Pt | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const s of clipShapes) {
+    minX = Math.min(minX, s.x);
+    minY = Math.min(minY, s.y);
+    maxX = Math.max(maxX, s.x + s.w);
+    maxY = Math.max(maxY, s.y + s.h);
+  }
+  for (const e of clipEdges) {
+    if (e.from === undefined && e.x1 !== undefined && e.y1 !== undefined) {
+      minX = Math.min(minX, e.x1);
+      minY = Math.min(minY, e.y1);
+      maxX = Math.max(maxX, e.x1);
+      maxY = Math.max(maxY, e.y1);
+    }
+    if (e.to === undefined && e.x2 !== undefined && e.y2 !== undefined) {
+      minX = Math.min(minX, e.x2);
+      minY = Math.min(minY, e.y2);
+      maxX = Math.max(maxX, e.x2);
+      maxY = Math.max(maxY, e.y2);
+    }
+  }
+  if (!Number.isFinite(minX)) return null;
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+/**
+ * Paste a fresh copy of the clipboard. When `at` (a world point, e.g. under the
+ * mouse cursor) is given, the copy is translated so its bounding-box center lands
+ * there. Otherwise repeats are cascaded by a fixed offset so they don't stack.
+ */
+export function pasteClipboard(at?: Pt): void {
   if (!clipShapes.length && !clipEdges.length) return;
-  pasteCount++;
-  const d = PASTE_OFFSET * pasteCount;
+
+  let dx: number;
+  let dy: number;
+  const center = at ? clipboardCenter() : null;
+  if (at && center) {
+    // drop the whole selection so its center sits under the cursor
+    dx = at.x - center.x;
+    dy = at.y - center.y;
+  } else {
+    // no target: cascade off the original so repeats don't land exactly on top
+    pasteCount++;
+    dx = dy = PASTE_OFFSET * pasteCount;
+  }
 
   const idMap = new Map<string, string>();
   const newShapeIds: string[] = [];
   for (const s of clipShapes) {
     const nid = uid();
     idMap.set(s.id, nid);
-    doc.board.shapes[nid] = { ...s, id: nid, x: s.x + d, y: s.y + d };
+    doc.board.shapes[nid] = { ...s, id: nid, x: s.x + dx, y: s.y + dy };
     doc.board.order.push(nid);
     scene.addNode(nid);
     newShapeIds.push(nid);
@@ -82,19 +132,19 @@ export function pasteClipboard(): void {
     const clone: Edge = { ...e, id: nid, from, to };
     // free endpoints move with the pasted copy so it doesn't sit on the original
     if (clone.from === undefined && clone.x1 !== undefined && clone.y1 !== undefined) {
-      clone.x1 += d;
-      clone.y1 += d;
+      clone.x1 += dx;
+      clone.y1 += dy;
     }
     if (clone.to === undefined && clone.x2 !== undefined && clone.y2 !== undefined) {
-      clone.x2 += d;
-      clone.y2 += d;
+      clone.x2 += dx;
+      clone.y2 += dy;
     }
     // shift a manual bend only when both of its endpoints moved with it (both
     // copied, or free) — so an edge re-attached to existing shapes keeps its shape.
     const bendMoves = (fromCopied || e.from === undefined) && (toCopied || e.to === undefined);
     if (bendMoves) {
-      if (clone.cx !== undefined) clone.cx += d;
-      if (clone.cy !== undefined) clone.cy += d;
+      if (clone.cx !== undefined) clone.cx += dx;
+      if (clone.cy !== undefined) clone.cy += dy;
     }
     doc.board.edges[nid] = clone;
     doc.board.order.push(nid);
