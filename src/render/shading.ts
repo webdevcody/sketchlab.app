@@ -32,44 +32,64 @@ export const H_PED = 24;
 export const H_ARROW = 9;
 
 /**
- * Cap on the rendered elevation magnitude. The integer `layer` is unbounded and
- * always drives paint order, but the visual lift saturates here so far/near
- * layers never float off-screen or clip through the near plane.
- */
-export const ELEV_CAP = 2400;
-
-/**
  * Default world-up units between adjacent floors. Each distinct `layer` value is
  * a discrete board FLOOR drawn at its own elevation. At 220 the floors read as
- * clearly separated plates; ELEV_CAP keeps ~11 floors (10*220 + H_PED = 2224) in
- * front of the near plane before the lift saturates.
+ * clearly separated plates. Floor lift is unbounded — a tall stack just recedes
+ * further, and the user zooms/pans out to keep it in frame (no elevation cap).
  */
 export const FLOOR_STEP = 220;
 /** @deprecated kept as an alias so older imports keep resolving. */
 export const LAYER_STEP = FLOOR_STEP;
 
+// The floor-spread and distant-fade dials are global VIEW preferences (like the
+// wheel-zoom toggle), not document data — so they persist in localStorage and
+// are re-read when this module loads, keeping the stack spread/faded exactly as
+// the user last left it across refreshes.
+const FLOOR_STEP_KEY = "sketchlab:floor-step";
+const LAYER_FADE_KEY = "sketchlab:layer-fade";
+
+/** Read a persisted positive view-dial value, falling back when absent/invalid. */
+function readStoredDial(key: string, fallback: number): number {
+  try {
+    const v = Number(localStorage.getItem(key));
+    return Number.isFinite(v) && v > 0 ? v : fallback;
+  } catch {
+    return fallback; // private mode / disabled storage — use the default
+  }
+}
+
+function writeStoredDial(key: string, value: number): void {
+  try {
+    localStorage.setItem(key, String(value));
+  } catch {
+    /* ignore — preference just won't persist across reloads */
+  }
+}
+
 // Live, view-adjustable floor spacing — Option+pinch spreads the stack out/in.
-// Held as module state (a view dial like zoom/pitch), not document data. Far
-// floors still saturate at ELEV_CAP, so the widest steps only fan the lower
-// floors apart before the cap clamps the top of the stack.
+// Held as module state (a view dial like zoom/pitch), not document data. There
+// is no elevation cap: the widest steps fan every floor apart linearly, so the
+// top floor recedes off-screen and the user zooms out rather than the stack
+// collapsing into a clamped ceiling.
 export const MIN_FLOOR_STEP = 70;
 export const MAX_FLOOR_STEP = 1400;
-let floorStep = FLOOR_STEP;
+
+function clampFloorStep(step: number): number {
+  return step < MIN_FLOOR_STEP ? MIN_FLOOR_STEP : step > MAX_FLOOR_STEP ? MAX_FLOOR_STEP : step;
+}
+
+let floorStep = clampFloorStep(readStoredDial(FLOOR_STEP_KEY, FLOOR_STEP));
 
 /** Current world-up gap between adjacent floors. */
 export function getFloorStep(): number {
   return floorStep;
 }
 
-/** Set the live floor spacing (clamped). Returns the value actually applied. */
+/** Set the live floor spacing (clamped + persisted). Returns the value actually applied. */
 export function setFloorStep(step: number): number {
-  floorStep =
-    step < MIN_FLOOR_STEP ? MIN_FLOOR_STEP : step > MAX_FLOOR_STEP ? MAX_FLOOR_STEP : step;
+  floorStep = clampFloorStep(step);
+  writeStoredDial(FLOOR_STEP_KEY, floorStep);
   return floorStep;
-}
-
-function clampElev(e: number): number {
-  return e < -ELEV_CAP ? -ELEV_CAP : e > ELEV_CAP ? ELEV_CAP : e;
 }
 
 /** Integer stacking layer / floor index of a shape (0 when unset). The painter's-order key. */
@@ -82,14 +102,14 @@ export function floorOf(s: { layer?: number }): number {
   return s.layer ?? 0;
 }
 
-/** World-up elevation of a floor's plane, by index (clamped). */
+/** World-up elevation of a floor's plane, by index (unbounded — no ceiling). */
 export function floorElevation(i: number): number {
-  return clampElev(i * floorStep);
+  return i * floorStep;
 }
 
-/** World-up elevation of a shape's pedestal base — its floor's plane (clamped). */
+/** World-up elevation of a shape's pedestal base — its floor's plane (unbounded). */
 export function elevationOf(s: { layer?: number }): number {
-  return clampElev(floorOf(s) * floorStep);
+  return floorOf(s) * floorStep;
 }
 
 /** Default opacity kept per floor of separation from the active layer (geometric falloff). */
@@ -102,21 +122,26 @@ export const LAYER_FADE_STEP = 0.55;
 // document data.
 export const MIN_LAYER_FADE_STEP = 0.25;
 export const MAX_LAYER_FADE_STEP = 0.8;
-let layerFadeStep = LAYER_FADE_STEP;
+
+function clampFadeStep(step: number): number {
+  return step < MIN_LAYER_FADE_STEP
+    ? MIN_LAYER_FADE_STEP
+    : step > MAX_LAYER_FADE_STEP
+      ? MAX_LAYER_FADE_STEP
+      : step;
+}
+
+let layerFadeStep = clampFadeStep(readStoredDial(LAYER_FADE_KEY, LAYER_FADE_STEP));
 
 /** Current geometric fade applied per floor of separation (the live "layer fade" dial). */
 export function getLayerFadeStep(): number {
   return layerFadeStep;
 }
 
-/** Set the live fade falloff (clamped). Returns the value actually applied. */
+/** Set the live fade falloff (clamped + persisted). Returns the value actually applied. */
 export function setLayerFadeStep(step: number): number {
-  layerFadeStep =
-    step < MIN_LAYER_FADE_STEP
-      ? MIN_LAYER_FADE_STEP
-      : step > MAX_LAYER_FADE_STEP
-        ? MAX_LAYER_FADE_STEP
-        : step;
+  layerFadeStep = clampFadeStep(step);
+  writeStoredDial(LAYER_FADE_KEY, layerFadeStep);
   return layerFadeStep;
 }
 

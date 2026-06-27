@@ -426,6 +426,43 @@ export function toggleLayerHidden(index: number): void {
   setLayerHidden(index, !isLayerHidden(doc.board, index));
 }
 
+/** True when floor `index` is the only visible floor (every other floor hidden). */
+export function isLayerSoloed(board: Board, index: number): boolean {
+  const n = floorCount(board);
+  if (n < 2) return false;
+  for (let i = 0; i < n; i++) {
+    if (isLayerHidden(board, i) !== (i !== index)) return false;
+  }
+  return true;
+}
+
+/**
+ * Isolate floor `index`: hide every other floor and reveal this one. If it is
+ * already the only visible floor, restore every floor to visible instead, so the
+ * same button toggles solo on and off. The isolated floor becomes the active one.
+ */
+export function soloLayer(index: number): void {
+  const layers = materializeLayers();
+  if (index < 0 || index >= layers.length) return;
+  const restore = isLayerSoloed(doc.board, index);
+  for (let i = 0; i < layers.length; i++) {
+    if (!restore && i !== index) layers[i].hidden = true;
+    else delete layers[i].hidden;
+  }
+
+  // drop any selection that now sits on a hidden floor, then park the highlight
+  // on the isolated (always-visible) floor so new shapes never land out of sight
+  const sel = $selection.get();
+  const kept = [...sel.shapes].filter(
+    (id) => !isLayerHidden(doc.board, doc.board.shapes[id]?.layer ?? 0),
+  );
+  if (kept.length !== sel.shapes.size) setSelection(kept, sel.edges);
+  $activeLayer.set(index);
+
+  scene.refreshLayerVisibility();
+  bumpRevision();
+}
+
 /** Cycle the active/highlighted floor by `dir`, wrapping through the stack. */
 export function cycleActiveLayer(dir: 1 | -1): void {
   const n = floorCount(doc.board);

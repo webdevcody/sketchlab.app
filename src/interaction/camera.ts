@@ -1,6 +1,5 @@
 import { scene } from "../render/scene";
 import {
-  ELEV_CAP,
   floorElevation,
   getFloorStep,
   getLayerFadeStep,
@@ -205,20 +204,17 @@ export function rotateBy(deltaYaw: number): void {
  * adjacent layers (Option+pinch). `factor` > 1 fans the stack out, < 1 collapses
  * it. Changing the spacing re-seats every pedestal's base elevation, so we re-run
  * the camera — that bumps the scene epoch and reprojects the whole board at the
- * new floor heights. No-op once the spacing saturates at its clamp.
+ * new floor heights.
  *
- * The top floor's lift saturates at ELEV_CAP. Fanning out past the step that pins
- * the top floor there can't raise it any higher — it only drags the LOWER floors
- * up into the capped top. So once the top floor is at the cap we refuse to spread
- * further, and clamp an in-range spread so it stops exactly at that step.
+ * Floor lift is unbounded — there is no elevation ceiling that would pull the top
+ * floors together. The spacing is bounded only by setFloorStep's MIN/MAX clamp;
+ * once it saturates there the call is a no-op. Spread far enough and the top
+ * floor simply recedes off-screen, where the user zooms/pans out to follow it.
  */
 export function spaceLayersBy(factor: number): void {
   const before = getFloorStep();
-  const topIndex = floorCount() - 1;
-  const maxStep = topIndex > 0 ? ELEV_CAP / topIndex : Infinity;
-  if (factor > 1 && before >= maxStep) return; // top floor already capped — don't spread
-  const after = setFloorStep(factor > 1 ? Math.min(before * factor, maxStep) : before * factor);
-  if (after === before) return;
+  const after = setFloorStep(before * factor);
+  if (after === before) return; // saturated at MIN/MAX_FLOOR_STEP — nothing changed
   $floorSpacing.set(after); // keep the Layers-panel slider in sync
   scene.applyCamera();
 }

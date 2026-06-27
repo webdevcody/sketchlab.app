@@ -978,6 +978,11 @@ button {
   font-size: 15px;
   letter-spacing: -0.02em;
 }
+.layers-panel__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
 .layers-panel__collapse {
   width: 30px;
   height: 30px;
@@ -992,14 +997,20 @@ button {
   color: var(--text);
   border-color: rgba(148, 163, 184, 0.4);
 }
-.layers-panel__hint {
-  margin: 0 2px;
-  font-size: 11.5px;
-  color: var(--muted);
-  line-height: 1.4;
-}
+/* compact "new floor" button living in the panel header next to collapse */
 .layers-panel__add {
-  width: 100%;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--accent);
+}
+.layers-panel__add:hover {
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.4);
 }
 .layers-panel__list {
   flex: 1;
@@ -1011,8 +1022,8 @@ button {
 }
 .layers-panel__item {
   display: flex;
-  align-items: center;
-  gap: 6px;
+  flex-direction: column;
+  gap: 4px;
   padding: 6px 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
@@ -1021,6 +1032,16 @@ button {
   text-align: left;
   cursor: pointer;
   transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+}
+.layers-panel__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.layers-panel__bottom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 .layers-panel__item:hover {
   border-color: rgba(56, 189, 248, 0.4);
@@ -1056,6 +1077,34 @@ button {
 .layers-panel__item.is-hidden .layers-panel__eye {
   color: var(--muted);
 }
+/* solo / isolate: same footprint as the eye, lit up when this floor is the only
+   one showing so the toggle state reads at a glance */
+.layers-panel__solo {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.layers-panel__solo:hover:not(:disabled) {
+  color: var(--text);
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.4);
+}
+.layers-panel__solo[aria-pressed="true"] {
+  color: var(--accent);
+  background: rgba(56, 189, 248, 0.16);
+  border-color: rgba(56, 189, 248, 0.5);
+}
+.layers-panel__solo:disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
 /* per-floor color key: a compact round swatch that opens the accent picker */
 .layers-panel__color {
   flex: 0 0 auto;
@@ -1069,11 +1118,9 @@ button {
 .layers-panel__item.is-hidden .layers-panel__color {
   opacity: 0.5;
 }
-.layers-panel__meta {
-  min-width: 0;
-  flex: 1;
-}
 .layers-panel__name {
+  flex: 1;
+  min-width: 0;
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
@@ -1081,9 +1128,13 @@ button {
   text-overflow: ellipsis;
 }
 .layers-panel__sub {
-  margin-top: 2px;
+  flex: 1;
+  min-width: 0;
   font-size: 11px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .layers-panel__actions {
   display: flex;

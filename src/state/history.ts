@@ -1,28 +1,42 @@
 import { atom } from "nanostores";
 import { scene } from "../render/scene";
-import { $revision, bumpRevision, doc, setSelection } from "./store";
+import { $revision, $selection, bumpRevision, doc, setSelection } from "./store";
 
 /**
- * Snapshot-based undo/redo. Mutations bump `$revision`; we coalesce a burst of
- * bumps (a whole drag, a color-slider sweep, a run of keystrokes) into ONE
- * history entry via a trailing debounce, so each undo step maps to one action.
+ * Snapshot-based undo/redo. Document mutations bump `$revision` and selection
+ * changes update `$selection`; both feed the same trailing debounce, so a burst
+ * (a whole drag, a color-slider sweep, a run of keystrokes, or a selection
+ * change) coalesces into ONE history entry and each undo step maps to one
+ * action. Selection lives in the snapshot, so undo/redo also restore what was
+ * selected — selecting/deselecting nodes or groups is itself undoable.
  */
 const LIMIT = 60;
 const COALESCE_MS = 350;
+
+type Snapshot = Pick<typeof doc.board, "shapes" | "edges" | "order" | "layers"> & {
+  sel?: { shapes: string[]; edges: string[] };
+};
 
 let past: string[] = [];
 let future: string[] = [];
 let baseline = "";
 let suspended = false;
 let timer: ReturnType<typeof setTimeout> | undefined;
-let unsub: (() => void) | null = null;
+let unsubs: Array<() => void> = [];
 
 export const $canUndo = atom(false);
 export const $canRedo = atom(false);
 
 function snapshot(): string {
   const b = doc.board;
-  return JSON.stringify({ shapes: b.shapes, edges: b.edges, order: b.order, layers: b.layers });
+  const sel = $selection.get();
+  return JSON.stringify({
+    shapes: b.shapes,
+    edges: b.edges,
+    order: b.order,
+    layers: b.layers,
+    sel: { shapes: [...sel.shapes], edges: [...sel.edges] },
+  });
 }
 
 function updateFlags(): void {
@@ -56,30 +70,30 @@ function flushPending(): void {
 }
 
 function restore(snap: string): void {
-  const data = JSON.parse(snap) as Pick<typeof doc.board, "shapes" | "edges" | "order" | "layers">;
+  const data = JSON.parse(snap) as Snapshot;
   doc.board.shapes = data.shapes;
   doc.board.edges = data.edges;
   doc.board.order = data.order;
   doc.board.layers = data.layers ?? [];
-  setSelection([], []);
+  setSelection(data.sel?.shapes ?? [], data.sel?.edges ?? []);
   scene.rebuild();
 }
 
 /** Begin tracking history for the active board (call after loadBoard). */
 export function initHistory(): void {
-  if (unsub) unsub();
+  for (const u of unsubs) u();
   past = [];
   future = [];
   baseline = snapshot();
   updateFlags();
-  unsub = $revision.subscribe(() => schedule());
+  // Doc mutations AND selection changes both schedule a coalesced commit, so
+  // selecting/deselecting is captured as its own undoable step.
+  unsubs = [$revision.subscribe(() => schedule()), $selection.subscribe(() => schedule())];
 }
 
 export function disposeHistory(): void {
-  if (unsub) {
-    unsub();
-    unsub = null;
-  }
+  for (const u of unsubs) u();
+  unsubs = [];
   if (timer) {
     clearTimeout(timer);
     timer = undefined;

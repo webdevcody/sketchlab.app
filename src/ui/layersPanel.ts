@@ -22,6 +22,8 @@ const ICON_EYE_OFF = svg(
   '<path d="M3 3l18 18"/><path d="M10.6 5.1A10.9 10.9 0 0 1 12 5c6.4 0 10 7 10 7a18.4 18.4 0 0 1-3.2 4.2"/><path d="M6.5 6.6A18.2 18.2 0 0 0 2 12s3.6 7 10 7a10.8 10.8 0 0 0 4-.75"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
 );
 const ICON_COLLAPSE = svg('<path d="M9 6l6 6-6 6"/>');
+const ICON_PLUS = svg('<path d="M12 5v14M5 12h14"/>');
+const ICON_SOLO = svg('<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/>');
 
 // The fade slider runs 0..100 as a "how much do distant floors fade" strength
 // (left = keep far floors clear, right = fade them out fast), which is the
@@ -88,16 +90,17 @@ export class LayersPanel {
     const addBtn = h(
       "button",
       {
-        class: "btn btn--accent layers-panel__add",
+        class: "layers-panel__add",
         type: "button",
         title: "Add a floor on top of the stack",
+        "aria-label": "Add a floor on top of the stack",
+        html: ICON_PLUS,
         onclick: () => {
           const idx = actions.addLayer();
           $activeLayer.set(idx);
           toast(`Added ${doc.board.layers?.[idx]?.name ?? "layer"}`);
         },
       },
-      "+ Add layer",
     );
 
     this.list = h("div", { class: "layers-panel__list" });
@@ -154,14 +157,8 @@ export class LayersPanel {
         "div",
         { class: "layers-panel__header" },
         h("h2", null, "Layers"),
-        collapseBtn,
+        h("div", { class: "layers-panel__header-actions" }, addBtn, collapseBtn),
       ),
-      h(
-        "p",
-        { class: "layers-panel__hint" },
-        "Toggle the eye to show / hide a floor · click a row to highlight it · ↑ / ↓ to cycle",
-      ),
-      addBtn,
       this.list,
       this.spread,
       this.fade,
@@ -305,6 +302,27 @@ export class LayersPanel {
       },
     );
 
+    // "solo" — hide every other floor, leaving only this one. Toggles back to
+    // showing all floors when this is already the only one visible. Pointless on a
+    // single-floor board, so it's disabled there.
+    const soloed = actions.isLayerSoloed(doc.board, i);
+    const soloBtn = h(
+      "button",
+      {
+        class: "layers-panel__solo",
+        type: "button",
+        title: soloed ? "Show all floors" : "Hide all other floors",
+        "aria-label": soloed ? "Show all floors" : "Hide all other floors",
+        "aria-pressed": soloed ? "true" : "false",
+        disabled: total > 1 ? undefined : true,
+        html: ICON_SOLO,
+        onclick: (e: Event) => {
+          e.stopPropagation();
+          actions.soloLayer(i);
+        },
+      },
+    );
+
     const assignBtn = h(
       "button",
       {
@@ -373,19 +391,26 @@ export class LayersPanel {
           }
         },
       },
-      eyeBtn,
-      colorPicker.el,
+      // Top line: visibility controls + the (now full-width) floor name.
       h(
         "div",
-        { class: "layers-panel__meta" },
+        { class: "layers-panel__top" },
+        eyeBtn,
+        soloBtn,
+        colorPicker.el,
         h("div", { class: "layers-panel__name" }, row.name),
+      ),
+      // Bottom line: floor / item count on the left, stack actions on the right.
+      h(
+        "div",
+        { class: "layers-panel__bottom" },
         h(
           "div",
           { class: "layers-panel__sub" },
           `Floor ${i} · ${row.count} item${row.count === 1 ? "" : "s"}${row.hidden ? " · hidden" : ""}`,
         ),
+        h("div", { class: "layers-panel__actions" }, assignBtn, renameBtn, delBtn),
       ),
-      h("div", { class: "layers-panel__actions" }, assignBtn, renameBtn, delBtn),
     );
   }
 }
