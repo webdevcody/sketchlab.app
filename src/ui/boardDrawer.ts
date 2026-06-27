@@ -1,5 +1,6 @@
 import { deleteBoard, listBoards } from "../persistence/db";
 import type { BoardMeta } from "../state/types";
+import { confirmDialog } from "./confirmDialog";
 import { h } from "./dom";
 
 const DRAWER_WIDTH = 280;
@@ -155,7 +156,11 @@ export class BoardDrawer {
         "aria-label": `Delete ${meta.name}`,
         onclick: async (e: Event) => {
           e.stopPropagation();
-          if (!confirm(`Delete "${meta.name}"? This cannot be undone.`)) return;
+          const ok = await confirmDialog({
+            title: "Delete board",
+            message: `Delete "${meta.name}"? This cannot be undone.`,
+          });
+          if (!ok) return;
           await deleteBoard(meta.id);
           this.opts.onDeleted(meta.id);
           await this.refresh();

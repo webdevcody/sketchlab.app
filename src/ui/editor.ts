@@ -15,6 +15,7 @@ import { generatedGraphToBoard } from "../state/generatedGraph";
 import { createStarterBoard } from "../state/starterBoard";
 import { emptyBoard } from "../state/store";
 import { BoardDrawer } from "./boardDrawer";
+import { confirmDialog } from "./confirmDialog";
 import { ControlsHelp } from "./controlsHelp";
 import { LayersPanel } from "./layersPanel";
 import { AIGeneratePanel } from "./aiGeneratePanel";
@@ -197,8 +198,13 @@ export async function mountEditor(
     Object.keys(doc.board.shapes).length > 0 || Object.keys(doc.board.edges).length > 0;
 
   const aiPanel = new AIGeneratePanel(editor, async ({ apiKey, prompt, mode, signal }) => {
-    if (mode === "generate" && hasBoardContent() && !confirm("Replace the current board with a generated diagram?")) {
-      return false;
+    if (mode === "generate" && hasBoardContent()) {
+      const ok = await confirmDialog({
+        title: "Replace board?",
+        message: "Replace the current board with a generated diagram? This clears the existing shapes.",
+        confirmLabel: "Replace",
+      });
+      if (!ok) return false;
     }
     const graph = await generateDiagramWithOpenAI({
       apiKey,

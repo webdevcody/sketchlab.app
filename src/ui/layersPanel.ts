@@ -8,6 +8,7 @@ import {
 } from "../render/shading";
 import * as actions from "../state/actions";
 import { $activeLayer, $floorSpacing, $layerFade, $revision, $selection, doc } from "../state/store";
+import { confirmDialog } from "./confirmDialog";
 import { h, toast } from "./dom";
 import { createSwatchPicker, LAYER_ACCENTS } from "./swatchPicker";
 
@@ -363,9 +364,13 @@ export class LayersPanel {
         type: "button",
         title: "Delete floor",
         disabled: total > 1 ? undefined : true,
-        onclick: (e: Event) => {
+        onclick: async (e: Event) => {
           e.stopPropagation();
-          if (!confirm(`Delete "${row.name}"? Shapes on it drop to the floor below.`)) return;
+          const ok = await confirmDialog({
+            title: "Delete floor",
+            message: `Delete "${row.name}"? Shapes on it drop to the floor below.`,
+          });
+          if (!ok) return;
           actions.deleteLayer(i);
         },
       },

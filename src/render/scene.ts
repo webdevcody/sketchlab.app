@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text } from "pixi.js";
+import { Application, Container, Graphics, PerspectiveMesh, Texture } from "pixi.js";
 import { $camera, doc } from "../state/store";
 import type { Edge, ID, Shape } from "../state/types";
 import { DEFAULT_FLOOR_COLOR, drawBoard, type GridBounds } from "./boardLayers";
@@ -12,7 +12,6 @@ import {
 import {
   type Pt,
   distToSegment,
-  hexToNumber,
   quadPoints,
   resolveEdgeGeometry,
 } from "./geometry";
@@ -22,9 +21,11 @@ import {
   projectBoard,
   type Projector,
   projScreen,
+  scaleAtBoard,
   setActiveProjector,
   toProjCamera,
 } from "./projection";
+import { createFloorLabelTexture, floorLabelKey } from "./floorLabel";
 import {
   elevationOf,
   floorElevation,
@@ -34,11 +35,6 @@ import {
   layerFade,
   layerOf,
 } from "./shading";
-import {
-  LABEL_FONT,
-  NAMEPLATE_FONT_WEIGHT,
-  NAMEPLATE_TRACKING,
-} from "./labelStyle";
 import {
   createNodeView,
   type NodeView,
@@ -52,9 +48,10 @@ class Scene {
   /** screen-space layer holding the projected tabletop frame + grid floor */
   private boardLayer!: Container;
   private boardGfx!: Graphics;
-  /** screen-space pill badges naming each floor, anchored to the floor's near-left corner */
+  /** layer holding the per-floor name placards (decaled flat onto each floor) */
   private badgeLayer!: Container;
-  private floorBadges: Array<{ container: Container; gfx: Graphics; text: Text }> = [];
+  /** per-floor name placards, laid flat on each floor's top-left corner in perspective */
+  private floorBadges: Array<{ mesh: PerspectiveMesh; texture: Texture | null; key: string; w: number; h: number }> = [];
   /** the highlighted floor index; drives the frame glow + token dimming */
   private activeLayer = 0;
   /** single z-stack holding both edge and node views, depth-sorted each frame */
@@ -308,27 +305,21 @@ class Scene {
     return Number.isFinite(best) ? best : 0;
   }
 
-  private makeBadge(): { container: Container; gfx: Graphics; text: Text } {
-    const container = new Container();
-    const gfx = new Graphics();
-    const text = new Text({
-      text: "",
-      style: {
-        fontFamily: LABEL_FONT,
-        fontSize: 13,
-        fontWeight: NAMEPLATE_FONT_WEIGHT,
-        fill: 0xdff6ff,
-        letterSpacing: NAMEPLATE_TRACKING,
-      },
-      resolution: 2,
-    });
-    text.anchor.set(0, 0.5);
-    container.addChild(gfx, text);
-    this.badgeLayer.addChild(container);
-    return { container, gfx, text };
+  private makeBadge(): { mesh: PerspectiveMesh; texture: Texture | null; key: string; w: number; h: number } {
+    // Starts empty (key ""); the first syncFloorBadges pass rasterizes its real
+    // placard texture. verticesX/Y match the nameplate mesh so the warp is smooth.
+    const mesh = new PerspectiveMesh({ texture: Texture.WHITE, verticesX: 8, verticesY: 8 });
+    mesh.visible = false;
+    this.badgeLayer.addChild(mesh);
+    return { mesh, texture: null, key: "", w: 0, h: 0 };
   }
 
-  /** One pill badge per floor at its near-left edge; brighter on the active floor. */
+  /**
+   * One name placard per floor, laid FLAT onto the floor's top-left corner so it
+   * reads as if printed on the layer — sheared/foreshortened by the same camera as
+   * the grid, not floating in screen space. The active floor's placard is brighter
+   * and takes the floor accent; far floors recede via the distance fade.
+   */
   private syncFloorBadges(b: GridBounds): void {
     const proj = getActiveProjector();
     const n = this.floorCount();
@@ -336,46 +327,58 @@ class Scene {
     while (this.floorBadges.length < count) this.floorBadges.push(this.makeBadge());
     while (this.floorBadges.length > count) {
       const bd = this.floorBadges.pop();
-      bd?.container.destroy({ children: true });
+      bd?.texture?.destroy(true);
+      bd?.mesh.destroy();
     }
-    const midY = (b.minY + b.maxY) / 2;
-    const { w: screenW } = this.screenSize();
+    // small screen-space inset so the placard sits just inside the far-left corner
+    const INSET_PX = 10;
     for (let i = 0; i < count; i++) {
       const bd = this.floorBadges[i];
       if (this.isFloorHidden(i)) {
-        bd.container.visible = false; // hidden floors show no badge
+        bd.mesh.visible = false; // hidden floors show no placard
         continue;
       }
       const name = doc.board.layers?.[i]?.name ?? (i === 0 ? "Ground" : `Layer ${i}`);
-      const p = projectBoard(proj, b.minX, midY, floorElevation(i)); // left edge of the floor
-      if (!p.ok) {
-        bd.container.visible = false;
+      const active = i === this.activeLayer;
+      const accent = doc.board.layers?.[i]?.color ?? DEFAULT_FLOOR_COLOR;
+      const key = floorLabelKey(name, active, accent);
+      if (key !== bd.key) {
+        const lbl = createFloorLabelTexture(name, active, accent);
+        bd.texture?.destroy(true);
+        bd.texture = lbl.texture;
+        bd.mesh.texture = lbl.texture;
+        bd.w = lbl.w;
+        bd.h = lbl.h;
+        bd.key = key;
+      }
+      const elev = floorElevation(i);
+      // size the placard in world units so it renders ~native px at the corner,
+      // then map that rectangle onto the floor plane: its near edge projects a hair
+      // wider than its far edge, so the label foreshortens like a real floor decal.
+      const sc = scaleAtBoard(proj, b.minX, b.minY, elev);
+      if (sc <= 0) {
+        bd.mesh.visible = false;
         continue;
       }
-      bd.container.visible = true;
-      const active = i === this.activeLayer;
-      const accent = hexToNumber(doc.board.layers?.[i]?.color ?? DEFAULT_FLOOR_COLOR);
-      bd.text.text = name.toUpperCase();
-      bd.text.alpha = active ? 1 : 0.55;
-      const padX = 9;
-      const padY = 5;
-      const w = bd.text.width + padX * 2;
-      const h = bd.text.height + padY * 2;
-      bd.gfx.clear();
-      bd.gfx.roundRect(0, -h / 2, w, h, 6);
-      bd.gfx.fill({ color: active ? 0x0c2740 : 0x091622, alpha: 0.92 });
-      bd.gfx.roundRect(0, -h / 2, w, h, 6);
-      // active badge takes the floor's accent; inactive ones stay a muted slate so
-      // the badge↔frame color link only shouts on the floor you're editing
-      bd.gfx.stroke({ width: 1.2, color: active ? accent : 0x1f3a52, alpha: active ? 0.95 : 0.6 });
-      bd.text.position.set(padX, 0);
-      // recede the badge with floor distance, but keep a high floor so far
+      const inset = INSET_PX / sc;
+      const wW = bd.w / sc;
+      const hW = bd.h / sc;
+      const x0 = b.minX + inset;
+      const y0 = b.minY + inset; // board minY is the FAR edge → label top points away
+      // four floor-plane corners in texture order: TL, TR, BR, BL
+      const tl = projectBoard(proj, x0, y0, elev);
+      const tr = projectBoard(proj, x0 + wW, y0, elev);
+      const br = projectBoard(proj, x0 + wW, y0 + hW, elev);
+      const bl = projectBoard(proj, x0, y0 + hW, elev);
+      if (!tl.ok || !tr.ok || !br.ok || !bl.ok) {
+        bd.mesh.visible = false;
+        continue;
+      }
+      bd.mesh.visible = true;
+      bd.mesh.setCorners(tl.sx, tl.sy, tr.sx, tr.sy, br.sx, br.sy, bl.sx, bl.sy);
+      // recede the placard with floor distance, but keep a high floor so far
       // labels stay readable for navigation
-      bd.container.alpha = layerFade(Math.abs(i - this.activeLayer), 0.45);
-      // keep the badge on-screen: the floor's left edge often sits beyond the
-      // viewport, so clamp x into a left margin while keeping the floor's height.
-      const x = Math.max(72, Math.min(p.sx + 12, screenW * 0.5));
-      bd.container.position.set(x, p.sy);
+      bd.mesh.alpha = layerFade(Math.abs(i - this.activeLayer), 0.45);
     }
   }
 
@@ -838,8 +841,9 @@ class Scene {
     if (!this.ready) return;
     this.ready = false;
     this.clear();
-    // badges live under boardLayer and are destroyed with the app; drop our refs
-    // so a fresh init() doesn't reuse dead containers.
+    // placard meshes live under boardLayer and are destroyed with the app; free
+    // their canvas textures and drop refs so a fresh init() can't reuse dead nodes.
+    for (const bd of this.floorBadges) bd.texture?.destroy(true);
     this.floorBadges = [];
     this.activeLayer = 0;
     this.app.destroy(true, { children: true });
