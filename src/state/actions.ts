@@ -521,6 +521,7 @@ export function createFreeEdge(opts: {
     y1: opts.y1,
     x2: opts.x2,
     y2: opts.y2,
+    fill: style.fill,
     label: "",
     fontSize: style.fontSize,
     directed: opts.directed,

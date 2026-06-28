@@ -51,6 +51,7 @@ export interface Edge {
   /** world-space position of a free `to` end (used when `to` is undefined) */
   x2?: number;
   y2?: number;
+  fill: string;
   label: string;
   /** edge label font size in world units; follows the same S/M/L presets as shapes */
   fontSize?: number;
