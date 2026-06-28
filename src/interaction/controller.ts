@@ -644,6 +644,7 @@ export class Controller {
       });
     }
     if (edge) {
+      edge.fill = $style.get().fill
       setSelection([], [edge.id]);
       $tool.set("select");
     }
