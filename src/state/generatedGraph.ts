@@ -1,8 +1,9 @@
 import { ICON_MAP, searchIcons } from "../render/icons";
+import { uid } from "../util";
 import { computeAutoLayoutEdgeBends, computeAutoLayoutPositions } from "./autoLayout";
 import { DEFAULT_TEXT_FONT_SIZE } from "./style";
 import { emptyBoard } from "./store";
-import type { Board, Edge, ID, Shape, ShapeKind } from "./types";
+import type { Board, Edge, ID, LayerDef, Shape, ShapeKind } from "./types";
 
 export type GeneratedNodeKind = "rect" | "circle" | "icon" | "text";
 
@@ -12,6 +13,8 @@ export interface GeneratedNode {
   kind?: GeneratedNodeKind;
   icon?: string;
   color?: string;
+  /** 0-based index of the named floor (see GeneratedGraph.layers) this node sits on. */
+  layer?: number;
 }
 
 export interface GeneratedEdge {
@@ -21,8 +24,17 @@ export interface GeneratedEdge {
   directed?: boolean;
 }
 
+/** A named floor in the generated 3D stack; its array index is a node's `layer`. */
+export interface GeneratedLayer {
+  name: string;
+  /** optional #RRGGBB accent for the floor frame/badge (defaults to cyan) */
+  color?: string;
+}
+
 export interface GeneratedGraph {
   name?: string;
+  /** Named floors, bottom→top. Index === GeneratedNode.layer. Omit/empty = single ground floor. */
+  layers?: GeneratedLayer[];
   nodes: GeneratedNode[];
   edges: GeneratedEdge[];
 }
@@ -36,6 +48,7 @@ const TEXT_W = 240;
 const TEXT_H = 72;
 const MAX_NODES = 48;
 const MAX_EDGES = 96;
+const MAX_LAYERS = 48;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -68,6 +81,33 @@ function normalizeKind(value: unknown, icon: string | undefined): GeneratedNodeK
 
 function normalizeColor(value: string | undefined): string {
   return value && HEX.test(value) ? value : DEFAULT_FILL;
+}
+
+/** A valid #RRGGBB accent, or undefined so callers fall back to the cyan default. */
+function optionalHexColor(value: string | undefined): string | undefined {
+  return value && HEX.test(value) ? value : undefined;
+}
+
+/** Clamp a model-supplied floor index to a non-negative integer within the cap. */
+function normalizeLayerIndex(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return 0;
+  const i = Math.floor(value);
+  return i < 0 ? 0 : i > MAX_LAYERS - 1 ? MAX_LAYERS - 1 : i;
+}
+
+function parseLayers(value: unknown): GeneratedLayer[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) throw new Error("Generated diagram layers must be an array");
+  if (value.length > MAX_LAYERS) {
+    throw new Error(`Generated diagram has too many layers; max is ${MAX_LAYERS}`);
+  }
+  return value.map((raw, i): GeneratedLayer => {
+    if (!isRecord(raw)) throw new Error(`layers[${i}] must be an object`);
+    return {
+      name: requiredString(raw, "name", `layers[${i}]`),
+      color: optionalHexColor(optionalString(raw, "color")),
+    };
+  });
 }
 
 function normalizeIcon(value: string | undefined, label: string): string {
@@ -105,6 +145,7 @@ export function parseGeneratedGraph(value: unknown): GeneratedGraph {
       kind: normalizeKind(raw.kind, icon),
       icon,
       color: optionalString(raw, "color"),
+      layer: normalizeLayerIndex(raw.layer),
     };
   });
 
@@ -125,6 +166,7 @@ export function parseGeneratedGraph(value: unknown): GeneratedGraph {
 
   return {
     name: optionalString(value, "name"),
+    layers: parseLayers(value.layers),
     nodes,
     edges,
   };
@@ -155,9 +197,29 @@ export function generatedGraphToBoard(graph: GeneratedGraph, fallbackName: strin
       fontSize: isText ? DEFAULT_TEXT_FONT_SIZE : 16,
     };
     if (kind === "icon") shape.icon = normalizeIcon(node.icon, node.label);
+    const layer = node.layer ?? 0;
+    if (layer > 0) shape.layer = layer; // 0 is the implicit ground floor — keep shapes minimal
     board.shapes[id] = shape;
     board.order.push(id);
   });
+
+  // Materialize the named floor stack. Cover every floor a node lands on, naming
+  // any gaps the model left, so the layers panel and renderer stay consistent. A
+  // single-floor diagram keeps the empty list (one implicit ground), matching
+  // emptyBoard and ensureLayers.
+  const maxLayer = graph.nodes.reduce((m, node) => Math.max(m, node.layer ?? 0), 0);
+  const floorCount = Math.max(graph.layers?.length ?? 0, maxLayer + 1);
+  if (floorCount > 1) {
+    board.layers = Array.from({ length: floorCount }, (_, i): LayerDef => {
+      const def = graph.layers?.[i];
+      const layer: LayerDef = {
+        id: uid(),
+        name: def?.name ?? (i === 0 ? "Ground" : `Layer ${i}`),
+      };
+      if (def?.color) layer.color = def.color;
+      return layer;
+    });
+  }
 
   graph.edges.forEach((edge, index) => {
     const from = idMap.get(edge.from);

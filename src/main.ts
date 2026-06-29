@@ -1,11 +1,13 @@
 import "./styles.css";
 import { loadBoardById, listBoards, saveBoard } from "./persistence/db";
 import { decodeBoard } from "./persistence/share";
+import { installRenderPerfDevtools } from "./render/perfDevtools";
 import { createStarterBoard } from "./state/starterBoard";
 import type { Board } from "./state/types";
 import { mountEditor, type MountedView } from "./ui/editor";
 
 const app = document.getElementById("app") as HTMLElement;
+installRenderPerfDevtools();
 
 let current: MountedView | null = null;
 let rendering = false;

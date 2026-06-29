@@ -219,6 +219,7 @@ export async function mountEditor(
       shapes: generated.shapes,
       edges: generated.edges,
       order: generated.order,
+      layers: generated.layers,
     });
     nameInput.value = doc.board.name;
     fitToContent();

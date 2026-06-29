@@ -14,6 +14,7 @@ import {
   NAMEPLATE_TRACKING,
 } from "../render/labelStyle";
 import { getActiveProjector, projectBoard, scaleAtBoard } from "../render/projection";
+import { isShapeInViewport } from "../render/culling";
 import { scene } from "../render/scene";
 import { elevationOf, floorElevation, floorOf, H_ARROW, H_PED } from "../render/shading";
 import { defaultLabelFont } from "../render/shapeView";
@@ -1253,10 +1254,13 @@ export class Controller {
   // ---- overlay (screen space) ----
   private drawOverlay(g: Graphics): void {
     const sel = $selection.get();
+    const proj = getActiveProjector();
+    const viewport = scene.screenSize();
 
     for (const id of sel.shapes) {
       const s = doc.board.shapes[id];
       if (!s) continue;
+      if (!isShapeInViewport(s, proj, viewport)) continue;
       // circle/icon get a ring around the raised disc; rect/image a box around the
       // raised slab; text a box on the ground. Everything rides the shape's layer
       // elevation so the outline stays glued to a lifted token.
@@ -1277,7 +1281,7 @@ export class Controller {
     }
 
     const single = this.singleSelectedShape();
-    if (single) {
+    if (single && isShapeInViewport(single, proj, viewport)) {
       for (const c of this.handlePoints(single)) {
         g.rect(c.x - HANDLE / 2, c.y - HANDLE / 2, HANDLE, HANDLE);
         g.fill(0x0b1220);

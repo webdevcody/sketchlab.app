@@ -51,11 +51,14 @@ export interface NodeView {
   iconGfx: Graphics;
   textMesh: PerspectiveMesh | null;
   textTexture: Texture | null;
+  textW: number;
+  textH: number;
   sprite: Sprite | null;
   styleKey: string;
   textKey: string;
   srcKey: string;
   labelHidden: boolean;
+  culled: boolean;
   /** camera epoch this view was last reprojected at; stale views reproject lazily */
   epoch: number;
 }
@@ -69,12 +72,24 @@ function textKeyOf(s: Shape): string {
 
 type SP = { sx: number; sy: number };
 
+const UNIT_CIRCLES = new Map<number, Array<{ x: number; y: number }>>();
+
+function unitCircle(n: number): Array<{ x: number; y: number }> {
+  const cached = UNIT_CIRCLES.get(n);
+  if (cached) return cached;
+  const pts = Array.from({ length: n }, (_, i) => {
+    const a = (i / n) * Math.PI * 2;
+    return { x: Math.cos(a), y: Math.sin(a) };
+  });
+  UNIT_CIRCLES.set(n, pts);
+  return pts;
+}
+
 /** Project a ground circle to its true screen polygon at a world-up height. */
 function projectRing(proj: Projector, cx: number, cy: number, r: number, h: number, n = 30): SP[] {
   const pts: SP[] = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    const p = projectBoard(proj, cx + Math.cos(a) * r, cy + Math.sin(a) * r, h);
+  for (const v of unitCircle(n)) {
+    const p = projectBoard(proj, cx + v.x * r, cy + v.y * r, h);
     if (!p.ok) return []; // any vertex behind camera → skip this token entirely
     pts.push({ sx: p.sx, sy: p.sy });
   }
@@ -365,10 +380,9 @@ function roundedRectPath(
   ctx.closePath();
 }
 
-function createNameplateTexture(s: Shape): Texture {
+function createNameplateTexture(s: Shape, box = nameplateMetrics(s)): Texture {
   const fontSize = s.fontSize ?? defaultLabelFont(s.kind);
   const lineHeight = fontSize * 1.3;
-  const box = nameplateMetrics(s);
   const resolution = 2;
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.ceil(box.w * resolution));
@@ -417,11 +431,14 @@ export function createNodeView(s: Shape, onReady?: () => void): NodeView {
     iconGfx,
     textMesh: null,
     textTexture: null,
+    textW: 0,
+    textH: 0,
     sprite: null,
     styleKey: "",
     textKey: "",
     srcKey: "",
     labelHidden: false,
+    culled: false,
     epoch: -1,
   };
   updateNodeView(view, s, onReady);
@@ -434,6 +451,7 @@ export function updateNodeView(view: NodeView, s: Shape, onReady?: () => void): 
   if (sk !== view.styleKey) {
     view.styleKey = sk;
     syncImage(view, s, onReady);
+    syncIcon(view, s);
   }
   const tk = textKeyOf(s);
   if (tk !== view.textKey) {
@@ -450,8 +468,7 @@ export function reprojectNodeView(view: NodeView, s: Shape, proj: Projector): vo
   const g = view.gfx;
   const ig = view.iconGfx;
   g.clear();
-  ig.clear();
-  ig.setFromMatrix(Matrix.IDENTITY);
+  ig.visible = false;
 
   if (s.kind === "text") {
     placePerspectiveText(view, s, proj);
@@ -483,16 +500,14 @@ export function reprojectNodeView(view: NodeView, s: Shape, proj: Projector): vo
       const ay = (ex.sy - apex.sy) * 2;
       const bx = (ey.sx - apex.sx) * 2;
       const by = (ey.sy - apex.sy) * 2;
-      // Draw centered at the origin at the real display size so curves tessellate
-      // crisply, then warp the unit square onto the parallelogram via the matrix.
-      const s0 = Math.max(Math.hypot(ax, ay), Math.hypot(bx, by), 1);
-      drawIcon(ig, s.icon, -s0 / 2, -s0 / 2, s0, readableText(s.fill));
-      ig.setFromMatrix(
-        new Matrix(ax / s0, ay / s0, bx / s0, by / s0, apex.sx, apex.sy),
-      );
+      // The vector icon is cached as a normalized centered square; per-frame work
+      // only warps that square onto the tilted pedestal top.
+      ig.setFromMatrix(new Matrix(ax, ay, bx, by, apex.sx, apex.sy));
+      ig.visible = true;
     } else {
       const size = 0.6 * (2 * r) * apex.scale;
-      drawIcon(ig, s.icon, apex.sx - size / 2, apex.sy - size / 2, size, readableText(s.fill));
+      ig.setFromMatrix(new Matrix(size, 0, 0, size, apex.sx, apex.sy));
+      ig.visible = true;
     }
   }
 
@@ -534,7 +549,7 @@ function placeNameplate(view: NodeView, s: Shape, proj: Projector): void {
   const cy = s.y + s.h / 2;
   const footY = cy + s.h / 2 + NAMEPLATE_OFFSET_Y;
   const base = elevationOf(s); // keep the nameplate glued under a lifted token
-  const box = nameplateMetrics(s);
+  const box = { w: view.textW, h: view.textH };
   const q = projectQuad(
     proj,
     cx - box.w / 2,
@@ -589,13 +604,23 @@ function syncImage(view: NodeView, s: Shape, onReady?: () => void): void {
   }
 }
 
+function syncIcon(view: NodeView, s: Shape): void {
+  const g = view.iconGfx;
+  g.clear();
+  g.setFromMatrix(Matrix.IDENTITY);
+  g.visible = false;
+  if (!s.icon) return;
+  drawIcon(g, s.icon, -0.5, -0.5, 1, readableText(s.fill));
+}
+
 function syncText(view: NodeView, s: Shape): void {
   if (!s.text) {
     clearTextMesh(view);
     return;
   }
   const isTextKind = s.kind === "text";
-  const texture = isTextKind ? createTextTexture(s) : createNameplateTexture(s);
+  const box = isTextKind ? { w: s.w, h: s.h } : nameplateMetrics(s);
+  const texture = isTextKind ? createTextTexture(s) : createNameplateTexture(s, box);
   if (!view.textMesh) {
     view.textMesh = new PerspectiveMesh({ texture, verticesX: 8, verticesY: 8 });
     (isTextKind ? view.container : view.labelContainer).addChild(view.textMesh);
@@ -605,6 +630,8 @@ function syncText(view: NodeView, s: Shape): void {
   }
   view.textTexture?.destroy(true);
   view.textTexture = texture;
+  view.textW = box.w;
+  view.textH = box.h;
   view.textMesh.visible = !view.labelHidden;
 }
 
@@ -616,4 +643,6 @@ function clearTextMesh(view: NodeView): void {
   }
   view.textTexture?.destroy(true);
   view.textTexture = null;
+  view.textW = 0;
+  view.textH = 0;
 }

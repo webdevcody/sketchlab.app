@@ -8,6 +8,7 @@ const SESSION_KEY = "sketchlab:openai-api-key";
 const RESPONSES_URL = "https://api.openai.com/v1/responses";
 const CONTEXT_MAX_NODES = 48;
 const CONTEXT_MAX_EDGES = 96;
+const CONTEXT_MAX_LAYERS = 48;
 const CONTEXT_MAX_TEXT = 160;
 const CONTEXT_MAX_NAME = 80;
 
@@ -18,6 +19,22 @@ const GENERATED_GRAPH_SCHEMA = {
   additionalProperties: false,
   properties: {
     name: { type: "string" },
+    layers: {
+      type: "array",
+      maxItems: 48,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          name: { type: "string", minLength: 1 },
+          color: {
+            type: "string",
+            pattern: "^#[0-9a-fA-F]{6}$",
+          },
+        },
+        required: ["name", "color"],
+      },
+    },
     nodes: {
       type: "array",
       minItems: 1,
@@ -34,8 +51,9 @@ const GENERATED_GRAPH_SCHEMA = {
             type: "string",
             pattern: "^#[0-9a-fA-F]{6}$",
           },
+          layer: { type: "integer", minimum: 0, maximum: 47 },
         },
-        required: ["id", "label", "kind", "icon", "color"],
+        required: ["id", "label", "kind", "icon", "color", "layer"],
       },
     },
     edges: {
@@ -54,7 +72,7 @@ const GENERATED_GRAPH_SCHEMA = {
       },
     },
   },
-  required: ["name", "nodes", "edges"],
+  required: ["name", "layers", "nodes", "edges"],
 } as const;
 
 export class OpenAIDiagramError extends Error {
@@ -103,6 +121,7 @@ function boardContext(board: Board): string {
     kind: generatedKind(shape.kind),
     icon: clipText(shape.icon, 48),
     color: clipText(shape.fill, 16),
+    layer: shape.layer ?? 0,
   }));
   const edges = Object.values(board.edges).filter((edge) =>
     edge.from !== undefined && edge.to !== undefined && included.has(edge.from) && included.has(edge.to),
@@ -112,7 +131,11 @@ function boardContext(board: Board): string {
     label: clipText(edge.label),
     directed: !!edge.directed,
   }));
-  return JSON.stringify({ name: clipText(board.name, CONTEXT_MAX_NAME), nodes: shapes, edges });
+  const layers = (board.layers ?? []).slice(0, CONTEXT_MAX_LAYERS).map((layer) => ({
+    name: clipText(layer.name, CONTEXT_MAX_NAME),
+    color: clipText(layer.color, 16),
+  }));
+  return JSON.stringify({ name: clipText(board.name, CONTEXT_MAX_NAME), layers, nodes: shapes, edges });
 }
 
 function promptContext(userPrompt: string, mode: DiagramGenerationMode, currentBoard?: Board): string {
@@ -125,8 +148,9 @@ ${boardContext(currentBoard)}
 Modification mode:
 - Apply the user request to the current graph.
 - Return the full updated graph after the modification, not a partial patch.
-- Preserve useful existing node ids, labels, and edges unless the user asks to change them.
-- You may add, remove, rename, regroup, or reconnect nodes when needed.
+- Preserve useful existing node ids, labels, edges, and layers unless the user asks to change them.
+- Preserve each node's existing "layer" unless the change calls for moving it; keep the existing "layers" floors unless asked to restructure them.
+- You may add, remove, rename, regroup, reconnect, or re-floor nodes when needed.
 `
     : `
 Generation mode:
@@ -146,6 +170,14 @@ Sketch Lab graph rules:
 - Keep diagrams concise: prefer 4-14 nodes unless the user asks for more.
 - Prefer directed edges for data flow, request flow, dependencies, or sequences.
 - Valid icon keys: ${iconKeys}
+
+Floors (layers):
+- A board is a stack of named horizontal floors rendered in 3D. "layers" lists them bottom→top; index 0 is the ground floor.
+- Every node has a "layer": the 0-based index of the floor it sits on. It must reference a floor in "layers" (or 0 for the ground floor).
+- Use floors to separate a system into stacked tiers, zones, or planes — e.g. Client / Edge / Application / Data, or network segments, or environments. Put nodes that belong to the same tier on the same floor; edges (dependencies, data/request flow) may cross floors.
+- Prefer floors only when the system has a natural vertical layering; 2-5 meaningful floors is typical. For a simple single-tier diagram, return "layers": [] and "layer": 0 for every node.
+- Order floors bottom (foundational, e.g. Data) to top (user-facing, e.g. Client). The number of floors must cover the highest "layer" you use.
+- Give each floor a short "name" and a bright, saturated #RRGGBB "color" that reads as a glowing frame on a dark canvas (e.g. #38bdf8 cyan, #4ade80 green, #fbbf24 amber, #fb923c orange, #f472b6 pink, #c084fc violet).
 ${modifyContext}
 
 User prompt:

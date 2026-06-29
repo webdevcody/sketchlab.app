@@ -21,29 +21,6 @@ const MIN_PITCH = 0.05;
 const MAX_PITCH = (85 * Math.PI) / 180; // keep the horizon out of the working field
 const DEFAULT_PITCH = (60 * Math.PI) / 180; // 30deg tilted from directly above
 const DEFAULT_DISTANCE = 1200;
-const FRAME_INSET = 120; // matches drawFrame's bezel inset; keep it in front of the near plane too
-const NEAR_MARGIN = 0.25; // floor the board's near edge at 25% of camera distance in depth
-
-/**
- * Lowest focusY (the deepest you can pan the board DOWN) that keeps the board's
- * near edge in front of the camera. Past this, the near corners cross the near
- * plane, `corners()` returns null, and the field/frame/grid blink out — the
- * "grid breaks when I move the board down too far" bug.
- *
- *   depth(nearEdge) = distance + (focusY - nearEdge) * cos(pitch)  ≥  distance·NEAR_MARGIN
- */
-function minFocusY(next: Camera): number {
-  const cos = Math.cos(clamp(next.pitch, MIN_PITCH, MAX_PITCH));
-  const nearEdge = scene.getBoardBounds().maxY + FRAME_INSET; // closest board row incl. bezel
-  return nearEdge + (next.distance * NEAR_MARGIN - next.distance) / cos;
-}
-
-function minDistanceForFocus(next: Camera): number {
-  const cos = Math.cos(clamp(next.pitch, MIN_PITCH, MAX_PITCH));
-  const nearEdge = scene.getBoardBounds().maxY + FRAME_INSET;
-  const distance = ((nearEdge - next.focusY) * cos) / (1 - NEAR_MARGIN);
-  return Math.max(MIN_DISTANCE, Number.isFinite(distance) ? distance : MIN_DISTANCE);
-}
 
 /** Number of rendered floors — named layers, or the highest shape layer in use. */
 function floorCount(): number {
@@ -66,7 +43,7 @@ function maxDistance(): number {
 }
 
 function clampDollyDistance(next: Camera): number {
-  return clamp(next.distance, minDistanceForFocus(next), maxDistance());
+  return clamp(next.distance, MIN_DISTANCE, maxDistance());
 }
 
 function keepDefaultPerspective(next: Camera): Camera {
@@ -79,17 +56,14 @@ function keepDefaultPerspective(next: Camera): Camera {
 /**
  * Pan/scroll is free — the focus (the ground point under the principal point) may
  * roam off the board into the void; a "Recenter" affordance (see {@link
- * isFocusOffBoard}) brings the user back instead of a hard wall. The one bound
- * kept here is the geometric near-plane floor (`minFocusY`): drop the focus below
- * it and the board's near edge crosses the near plane, `corners()` returns null,
- * and the field/frame/grid blink out. That's a rendering safeguard, not a
- * "stay on the board" leash, so focusX and the far/near horizontal extent are
- * left unbounded.
+ * isFocusOffBoard}) brings the user back instead of a hard wall. The board layer
+ * clips itself against the near plane, so the finite board size is never allowed
+ * to raise the camera's minimum dolly distance or zoom floor.
  */
 function clampFocus(next: Camera): { focusX: number; focusY: number } {
   return {
     focusX: next.focusX,
-    focusY: Math.max(next.focusY, minFocusY(next)),
+    focusY: next.focusY,
   };
 }
 

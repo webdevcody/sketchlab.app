@@ -27,7 +27,7 @@ export function tint(hex: string, f: number): number {
 }
 
 /** Pedestal extrusion height (world-up units) — how tall a token stands. */
-export const H_PED = 24;
+export const H_PED = 38;
 /** Arrows hover this far above the grid so their glow sits over the floor. */
 export const H_ARROW = 9;
 

@@ -16,21 +16,70 @@ export interface GridBounds {
 
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 const clamp01 = (v: number): number => (v < 0 ? 0 : v > 1 ? 1 : v);
+const NEAR_CLIP_EPS = 1e-5;
+const MIN_GRID_GAP_PX = 10;
+const MIN_GRID_LINES_PER_AXIS = 6;
+const MAX_GRID_LINES_PER_AXIS = 180;
 
-/** Four projected ground corners of a board rectangle, or null if any is behind the camera. */
-function corners(proj: Projector, b: GridBounds, inset = 0): ScreenPoint[] | null {
+interface BoardPoint {
+  x: number;
+  y: number;
+  depth: number;
+}
+
+export interface GridLine {
+  axis: 0 | 1;
+  seg: [ScreenPoint, ScreenPoint];
+  wxMid: number;
+  wyMid: number;
+  isMajor: boolean;
+}
+
+/**
+ * Project a board rectangle after clipping it to the camera's near plane. The
+ * finite board can be much larger than the current view; clipping here keeps a
+ * close zoom from making the whole field/frame disappear when only the near edge
+ * is behind the eye.
+ */
+function clippedRect(proj: Projector, b: GridBounds, elev = 0, inset = 0): ScreenPoint[] | null {
   const xs: [number, number] = [b.minX - inset, b.maxX + inset];
   const ys: [number, number] = [b.minY - inset, b.maxY + inset];
   // order: far-left, far-right, near-right, near-left (CW-ish for a clean fill)
-  const order: Array<[number, number]> = [
+  const order: BoardPoint[] = [
     [xs[0], ys[0]],
     [xs[1], ys[0]],
     [xs[1], ys[1]],
     [xs[0], ys[1]],
-  ];
+  ].map(([x, y]) => ({ x, y, depth: depthAtBoard(proj, x, y, elev) }));
+
+  const clipDepth = proj.cam.near + NEAR_CLIP_EPS;
+  const inside = (p: BoardPoint): boolean => p.depth > clipDepth;
+  const intersect = (a: BoardPoint, c: BoardPoint): BoardPoint => {
+    const t = (clipDepth - a.depth) / (c.depth - a.depth);
+    const x = a.x + (c.x - a.x) * t;
+    const y = a.y + (c.y - a.y) * t;
+    return { x, y, depth: clipDepth };
+  };
+
+  const clipped: BoardPoint[] = [];
+  for (let i = 0; i < order.length; i++) {
+    const a = order[i];
+    const c = order[(i + 1) % order.length];
+    const aInside = inside(a);
+    const cInside = inside(c);
+    if (aInside && cInside) {
+      clipped.push(c);
+    } else if (aInside && !cInside) {
+      clipped.push(intersect(a, c));
+    } else if (!aInside && cInside) {
+      clipped.push(intersect(a, c), c);
+    }
+  }
+  if (clipped.length < 3) return null;
+
   const out: ScreenPoint[] = [];
-  for (const [x, y] of order) {
-    const p = projectBoard(proj, x, y, 0);
+  for (const { x, y } of clipped) {
+    const p = projectBoard(proj, x, y, elev);
     if (!p.ok) return null;
     out.push({ sx: p.sx, sy: p.sy });
   }
@@ -45,7 +94,7 @@ function polyPath(g: Graphics, pts: ScreenPoint[]): void {
 
 /** Recessed deep-navy board field (the surface the grid is etched into). */
 export function drawField(g: Graphics, proj: Projector, b: GridBounds): void {
-  const c = corners(proj, b, 0);
+  const c = clippedRect(proj, b, 0, 0);
   if (!c) return;
   polyPath(g, c);
   g.fill({ color: 0x0a0f1a, alpha: 1 });
@@ -54,6 +103,71 @@ export function drawField(g: Graphics, proj: Projector, b: GridBounds): void {
 }
 
 /** Converging, depth-faded perspective grid. One Graphics, many stroke passes. */
+function projectedStepPx(proj: Projector, b: GridBounds, step: number, axis: 0 | 1): number {
+  const cx = (b.minX + b.maxX) / 2;
+  const cy = (b.minY + b.maxY) / 2;
+  const a = projectBoard(proj, cx, cy);
+  const d = axis === 0 ? projectBoard(proj, cx + step, cy) : projectBoard(proj, cx, cy + step);
+  if (!a.ok || !d.ok) return 0;
+  return Math.hypot(d.sx - a.sx, d.sy - a.sy);
+}
+
+function lineCount(min: number, max: number, step: number): number {
+  return Math.max(0, Math.floor((max - min) / step) + 1);
+}
+
+function adaptiveGridStep(
+  proj: Projector,
+  b: GridBounds,
+  baseStep: number,
+  axis: 0 | 1,
+): number {
+  const min = axis === 0 ? b.minX : b.minY;
+  const max = axis === 0 ? b.maxX : b.maxY;
+  let step = baseStep;
+  while (
+    step < (max - min) &&
+    lineCount(min, max, step * 2) >= MIN_GRID_LINES_PER_AXIS &&
+    (projectedStepPx(proj, b, step, axis) < MIN_GRID_GAP_PX ||
+      lineCount(min, max, step) > MAX_GRID_LINES_PER_AXIS)
+  ) {
+    step *= 2;
+  }
+  return step;
+}
+
+function isGridMultiple(value: number, step: number): boolean {
+  return Math.abs(value / step - Math.round(value / step)) < 1e-6;
+}
+
+export function collectGridLines(
+  proj: Projector,
+  b: GridBounds,
+  minor = 48,
+  major = 240,
+): GridLine[] {
+  const lines: GridLine[] = [];
+  const xStep = adaptiveGridStep(proj, b, minor, 0);
+  const yStep = adaptiveGridStep(proj, b, minor, 1);
+  const addLine = (ax: number, ay: number, bx: number, by: number, axis: 0 | 1, isMajor: boolean): void => {
+    const seg = projectBoardSegment(proj, ax, ay, bx, by, 0); // near-clipped
+    if (!seg) return;
+    lines.push({
+      axis,
+      seg,
+      wxMid: (ax + bx) / 2,
+      wyMid: (ay + by) / 2,
+      isMajor,
+    });
+  };
+
+  const x0 = Math.ceil(b.minX / xStep) * xStep;
+  for (let x = x0; x <= b.maxX; x += xStep) addLine(x, b.minY, x, b.maxY, 0, isGridMultiple(x, major));
+  const y0 = Math.ceil(b.minY / yStep) * yStep;
+  for (let y = y0; y <= b.maxY; y += yStep) addLine(b.minX, y, b.maxX, y, 1, isGridMultiple(y, major));
+  return lines;
+}
+
 export function drawGrid(
   g: Graphics,
   proj: Projector,
@@ -62,50 +176,28 @@ export function drawGrid(
   major = 240,
 ): void {
   const midX = (b.minX + b.maxX) / 2;
-  const dNear = depthAtBoard(proj, midX, b.minY);
-  const dFar = depthAtBoard(proj, midX, b.maxY);
+  const d0 = depthAtBoard(proj, midX, b.minY);
+  const d1 = depthAtBoard(proj, midX, b.maxY);
+  const dNear = Math.min(d0, d1);
+  const dFar = Math.max(d0, d1);
   const span = Math.max(1e-6, dFar - dNear);
   const bright = (wxMid: number, wyMid: number): number =>
     1 - (depthAtBoard(proj, wxMid, wyMid) - dNear) / span;
 
-  const line = (ax: number, ay: number, bx: number, by: number, isMajor: boolean): void => {
-    const seg = projectBoardSegment(proj, ax, ay, bx, by, 0); // near-clipped
-    if (!seg) return;
-    const wxMid = (ax + bx) / 2;
-    const wyMid = (ay + by) / 2;
-    const t = clamp01(bright(wxMid, wyMid));
-    const sc = scaleAtBoard(proj, wxMid, wyMid);
-    g.moveTo(seg[0].sx, seg[0].sy).lineTo(seg[1].sx, seg[1].sy);
-    if (isMajor) {
+  const strokeLine = (line: GridLine): void => {
+    const t = clamp01(bright(line.wxMid, line.wyMid));
+    const sc = scaleAtBoard(proj, line.wxMid, line.wyMid);
+    g.moveTo(line.seg[0].sx, line.seg[0].sy).lineTo(line.seg[1].sx, line.seg[1].sy);
+    if (line.isMajor) {
       g.stroke({ width: Math.max(0.6, 1.6 * sc), color: 0x38bdf8, alpha: lerp(0.05, 0.34, t), cap: "round" });
     } else {
       g.stroke({ width: Math.max(0.4, 1.0 * sc), color: 0x1f4a63, alpha: lerp(0.02, 0.2, t), cap: "round" });
     }
   };
 
-  const x0 = Math.ceil(b.minX / minor) * minor;
-  for (let x = x0; x <= b.maxX; x += minor) line(x, b.minY, x, b.maxY, x % major === 0);
-  const y0 = Math.ceil(b.minY / minor) * minor;
-  for (let y = y0; y <= b.maxY; y += minor) line(b.minX, y, b.maxX, y, y % major === 0);
-}
-
-/** Four projected corners of a board rectangle lifted to a world-up elevation. */
-function floorCorners(proj: Projector, b: GridBounds, elev: number, inset = 0): ScreenPoint[] | null {
-  const xs: [number, number] = [b.minX - inset, b.maxX + inset];
-  const ys: [number, number] = [b.minY - inset, b.maxY + inset];
-  const order: Array<[number, number]> = [
-    [xs[0], ys[0]],
-    [xs[1], ys[0]],
-    [xs[1], ys[1]],
-    [xs[0], ys[1]],
-  ];
-  const out: ScreenPoint[] = [];
-  for (const [x, y] of order) {
-    const p = projectBoard(proj, x, y, elev);
-    if (!p.ok) return null;
-    out.push({ sx: p.sx, sy: p.sy });
-  }
-  return out;
+  const lines = collectGridLines(proj, b, minor, major);
+  for (const line of lines) if (!line.isMajor) strokeLine(line);
+  for (const line of lines) if (line.isMajor) strokeLine(line);
 }
 
 /**
@@ -126,7 +218,7 @@ export function drawFloor(
   distance: number,
   color: string = DEFAULT_FLOOR_COLOR,
 ): void {
-  const ring = floorCorners(proj, b, elev, 0);
+  const ring = clippedRect(proj, b, elev, 0);
   if (!ring) return;
   const sc = scaleAtBoard(proj, (b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2, elev);
   const active = distance === 0;
@@ -177,7 +269,7 @@ export function drawFloor(
 
 /** Thin near-black lip tracing the ground field edge (seats the floor stack). */
 export function drawFrame(g: Graphics, proj: Projector, b: GridBounds): void {
-  const inner = corners(proj, b, 0);
+  const inner = clippedRect(proj, b, 0, 0);
   if (!inner) return;
   polyPath(g, inner);
   g.stroke({ width: 2, color: 0x04070c, alpha: 0.9 });

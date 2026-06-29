@@ -180,6 +180,7 @@ export interface Projector {
 const MIN_PITCH = 1e-3; // > 0; pitch -> 0 is edge-on (board collapses)
 const HALF_PI = Math.PI / 2;
 const HORIZON_EPS = 1e-9;
+const NEAR_CLIP_EPS = 1e-5;
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
@@ -297,10 +298,11 @@ export function createProjector(cam: Camera3D, screen: ScreenSize): Projector {
     by: number,
     height: number,
   ): { ax: number; ay: number; bx: number; by: number; da: number; db: number } | null {
+    const clipDepth = near + Math.max(NEAR_CLIP_EPS, near * NEAR_CLIP_EPS);
     let da = depthOf(ax, ay, height);
     let db = depthOf(bx, by, height);
-    const aBehind = da <= near;
-    const bBehind = db <= near;
+    const aBehind = da <= clipDepth;
+    const bBehind = db <= clipDepth;
     if (aBehind && bBehind) return null;
 
     let aX = ax;
@@ -309,17 +311,17 @@ export function createProjector(cam: Camera3D, screen: ScreenSize): Projector {
     let bY = by;
     if (aBehind || bBehind) {
       // depth(t) is linear along the segment; solve depth(t*) = near in closed form.
-      const t = (near - da) / (db - da);
+      const t = (clipDepth - da) / (db - da);
       const cxw = ax + (bx - ax) * t;
       const cyw = ay + (by - ay) * t;
       if (aBehind) {
         aX = cxw;
         aY = cyw;
-        da = near;
+        da = clipDepth;
       } else {
         bX = cxw;
         bY = cyw;
-        db = near;
+        db = clipDepth;
       }
     }
     return { ax: aX, ay: aY, bx: bX, by: bY, da, db };
