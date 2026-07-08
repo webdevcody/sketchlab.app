@@ -1,0 +1,41 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
+
+# Required for the OIDC token exchange with AWS (keyless deploys, no stored keys).
+permissions:
+  id-token: write
+  contents: read
+
+# Launch Pad's deploy is CAS-guarded against concurrent writers — run one deploy per
+# branch at a time and cancel a superseded run rather than race it.
+concurrency:
+  group: launch-pad-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::493255580566:role/sketchlab-deploy
+          aws-region: us-east-1
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # Pinned for reproducible deploys — bump when you publish a new CLI version.
+      # --no-* flags make this a deploy-only run that never provisions/repairs nodes, so the
+      # CI role needs zero EC2/IAM write permissions (provisioning is a local operator action).
+      # Targets the implicit default cluster (where sketchlab currently lives).
+      - run: npx --yes @agentsystemlabs/launch-pad@0.1.1 deploy --no-create --no-repair --no-recreate --yes
