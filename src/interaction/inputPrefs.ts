@@ -1,6 +1,8 @@
 // Lightweight, localStorage-backed input preferences. Read synchronously at
 // gesture time (no store subscription needed) so the wheel handler stays cheap.
 
+import { clamp } from "../util";
+
 const WHEEL_ZOOM_KEY = "sketchlab:wheel-zoom";
 const INVERT_PITCH_KEY = "sketchlab:invert-pitch";
 const RIGHT_DRAG_PAN_KEY = "sketchlab:right-drag-pan";
@@ -41,10 +43,6 @@ function writeNumber(key: string, value: number): void {
   } catch {
     /* ignore — preference just won't persist across reloads */
   }
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return v < lo ? lo : v > hi ? hi : v;
 }
 
 // Default OFF: a plain scroll pans (the trackpad-first default). Mouse users opt

@@ -107,7 +107,11 @@ export function pasteClipboard(at?: Pt): void {
   for (const s of clipShapes) minLayer = Math.min(minLayer, s.layer ?? 0);
   for (const e of clipEdges) minLayer = Math.min(minLayer, e.layer ?? 0);
   const layerDelta = Number.isFinite(minLayer) ? $activeLayer.get() - minLayer : 0;
-  const rebaseLayer = (layer: number | undefined): number => Math.max(0, (layer ?? 0) + layerDelta);
+  // Clamp to existing LayerDefs so multi-floor paste onto a high active floor
+  // never lands on a phantom index past layers.length - 1.
+  const maxLayer = Math.max(0, (doc.board.layers?.length ?? 1) - 1);
+  const rebaseLayer = (layer: number | undefined): number =>
+    Math.min(maxLayer, Math.max(0, (layer ?? 0) + layerDelta));
 
   const idMap = new Map<string, string>();
   const newShapeIds: string[] = [];

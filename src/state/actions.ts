@@ -477,6 +477,17 @@ export function deleteLayer(index: number, mode: "drop" | "purge" = "drop"): voi
     else if (l > index) s.layer = l - 1;
     scene.updateNode(s.id);
   }
+  // Free-floating edges keep their own layer (unlike anchored edges, which follow
+  // endpoints). Re-index them the same way shapes are, or survivors sit at the
+  // wrong elevation / paint order after a middle floor is removed.
+  for (const e of Object.values(doc.board.edges)) {
+    if (e.from !== undefined || e.to !== undefined) continue;
+    const l = e.layer ?? 0;
+    if (l === index) e.layer = Math.max(0, index - 1); // drop mode survivors
+    else if (l > index) e.layer = l - 1;
+    else continue;
+    scene.updateEdge(e.id);
+  }
   const active = $activeLayer.get();
   if (active >= layers.length) $activeLayer.set(Math.max(0, layers.length - 1));
   bumpRevision();
