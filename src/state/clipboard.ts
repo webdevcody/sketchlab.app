@@ -101,12 +101,11 @@ export function pasteClipboard(at?: Pt): void {
   // Rebase the paste onto the active floor: shift every copied item by the gap
   // between the active layer and the clipboard's lowest layer. A single-floor
   // copy lands entirely on the selected floor; a multi-floor copy keeps its
-  // relative stacking. Free-floating edges (no copied shape) carry their own layer.
+  // relative stacking. Include every clipboard edge (anchored and free) so
+  // layerDelta covers edges that carry their own `.layer` through rebase.
   let minLayer = Infinity;
   for (const s of clipShapes) minLayer = Math.min(minLayer, s.layer ?? 0);
-  for (const e of clipEdges) {
-    if (e.from === undefined && e.to === undefined) minLayer = Math.min(minLayer, e.layer ?? 0);
-  }
+  for (const e of clipEdges) minLayer = Math.min(minLayer, e.layer ?? 0);
   const layerDelta = Number.isFinite(minLayer) ? $activeLayer.get() - minLayer : 0;
   // Clamp to existing LayerDefs so multi-floor paste onto a high active floor
   // never lands on a phantom index past layers.length - 1.
