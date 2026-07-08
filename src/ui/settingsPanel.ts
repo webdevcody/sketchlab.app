@@ -10,29 +10,19 @@ import {
   setZoomInLimitPercent,
   setZoomOutLimitPercent,
   setZoomSensitivityPercent,
-  ZOOM_LIMIT_MAX,
-  ZOOM_LIMIT_MIN,
 } from "../interaction/inputPrefs";
 import { h } from "./dom";
+import {
+  DUAL_UNITS,
+  enforceDualZoomThumbGap,
+  percentToUnit,
+} from "./dualZoomRange";
 
 function svg(inner: string): string {
   return `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
 }
 
 const ICON_COLLAPSE = svg('<path d="M9 6l6 6-6 6"/>');
-
-// The dual zoom-limit slider runs on a 0..1000 unit track mapped LOGARITHMICALLY
-// to the 1%..1000% zoom range, so the useful low end (1%..100%) gets real room.
-const DUAL_UNITS = 1000;
-const DUAL_MIN_GAP = 15; // keep the two thumbs from crossing / touching
-const LOG_SPAN = Math.log(ZOOM_LIMIT_MAX / ZOOM_LIMIT_MIN);
-
-function unitToPercent(u: number): number {
-  return Math.round(ZOOM_LIMIT_MIN * Math.exp((u / DUAL_UNITS) * LOG_SPAN));
-}
-function percentToUnit(p: number): number {
-  return Math.round((Math.log(p / ZOOM_LIMIT_MIN) / LOG_SPAN) * DUAL_UNITS);
-}
 
 export interface SettingsPanelOptions {
   onCollapseChange?: (collapsed: boolean) => void;
@@ -218,20 +208,16 @@ export class SettingsPanel {
 
   /** Handle a drag on either zoom thumb: enforce the gap, persist, and re-clamp. */
   private onZoomThumbInput(): void {
-    let lo = Number(this.zoomMinInput.value);
-    let hi = Number(this.zoomMaxInput.value);
-    // whichever thumb crossed the other gets pushed back to keep the min gap
-    if (hi - lo < DUAL_MIN_GAP) {
-      if (document.activeElement === this.zoomMaxInput) {
-        lo = Math.max(0, hi - DUAL_MIN_GAP);
-        this.zoomMinInput.value = String(lo);
-      } else {
-        hi = Math.min(DUAL_UNITS, lo + DUAL_MIN_GAP);
-        this.zoomMaxInput.value = String(hi);
-      }
-    }
-    setZoomOutLimitPercent(unitToPercent(lo));
-    setZoomInLimitPercent(unitToPercent(hi));
+    const moving = document.activeElement === this.zoomMaxInput ? "max" : "min";
+    const { lo, hi, loPercent, hiPercent } = enforceDualZoomThumbGap(
+      Number(this.zoomMinInput.value),
+      Number(this.zoomMaxInput.value),
+      moving,
+    );
+    this.zoomMinInput.value = String(lo);
+    this.zoomMaxInput.value = String(hi);
+    setZoomOutLimitPercent(loPercent);
+    setZoomInLimitPercent(hiPercent);
     this.syncZoomRange();
     reclampZoom();
   }
