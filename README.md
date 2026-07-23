@@ -76,3 +76,7 @@ Double-click empty canvas to drop a text object · double-click a shape/line to 
 its text/label · drop an image file onto the canvas to add it · drag a selected line's
 center handle to bend it · resize handles keep a locked aspect ratio (square for shapes,
 natural ratio for images).
+
+## License
+
+This project is open source. See the repository for license details.
