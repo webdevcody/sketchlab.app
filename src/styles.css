@@ -1245,7 +1245,35 @@ button {
   color: var(--text);
   text-align: left;
   cursor: pointer;
-  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s;
+  position: relative;
+  transition: border-color 0.12s, background 0.12s, box-shadow 0.12s, opacity 0.12s;
+}
+.layers-panel__item[draggable="true"] {
+  cursor: grab;
+}
+.layers-panel__item.is-dragging {
+  opacity: 0.45;
+  cursor: grabbing;
+}
+/* Drop line between floors while reordering (issue #21). */
+.layers-panel__item.is-drop-before::before,
+.layers-panel__item.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  box-shadow: 0 0 10px rgba(56, 189, 248, 0.7);
+  pointer-events: none;
+  z-index: 1;
+}
+.layers-panel__item.is-drop-before::before {
+  top: -5px;
+}
+.layers-panel__item.is-drop-after::after {
+  bottom: -5px;
 }
 .layers-panel__top {
   display: flex;

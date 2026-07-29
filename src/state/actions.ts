@@ -493,6 +493,59 @@ export function deleteLayer(index: number, mode: "drop" | "purge" = "drop"): voi
   bumpRevision();
 }
 
+/** Remap a floor index after moving the floor at `from` to `to`. */
+function remapLayerIndex(old: number, from: number, to: number): number {
+  if (old === from) return to;
+  if (from < to) {
+    if (old > from && old <= to) return old - 1;
+  } else if (from > to) {
+    if (old >= to && old < from) return old + 1;
+  }
+  return old;
+}
+
+/**
+ * Move floor `fromIndex` to `toIndex` in the named-floor stack. Shapes and
+ * free-floating edges on every remapped floor follow; the active floor highlight
+ * tracks the moved entry. Paint/elevation update immediately.
+ */
+export function reorderLayer(fromIndex: number, toIndex: number): void {
+  const count = floorCount(doc.board);
+  if (
+    fromIndex === toIndex ||
+    fromIndex < 0 ||
+    toIndex < 0 ||
+    fromIndex >= count ||
+    toIndex >= count
+  ) {
+    return;
+  }
+
+  const layers = materializeLayers();
+  const [moved] = layers.splice(fromIndex, 1);
+  layers.splice(toIndex, 0, moved);
+
+  for (const s of Object.values(doc.board.shapes)) {
+    const cur = s.layer ?? 0;
+    const next = remapLayerIndex(cur, fromIndex, toIndex);
+    if (next === cur) continue;
+    s.layer = next;
+    scene.updateNode(s.id);
+  }
+  for (const e of Object.values(doc.board.edges)) {
+    if (e.from !== undefined || e.to !== undefined) continue;
+    const cur = e.layer ?? 0;
+    const next = remapLayerIndex(cur, fromIndex, toIndex);
+    if (next === cur) continue;
+    e.layer = next;
+    scene.updateEdge(e.id);
+  }
+
+  $activeLayer.set(remapLayerIndex($activeLayer.get(), fromIndex, toIndex));
+  scene.redrawBoard();
+  bumpRevision();
+}
+
 /** Move the given shapes onto floor `index`. */
 export function assignSelectionToLayer(ids: Iterable<ID>, index: number): void {
   applyLayer(ids, () => index);
