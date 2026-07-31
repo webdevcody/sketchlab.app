@@ -15,6 +15,7 @@ import {
   type EdgeSiblingIndex,
   type Pt,
   distToSegment,
+  isRoundFootprint,
   quadPoints,
   resolveEdgeGeometry,
 } from "./geometry";
@@ -1078,7 +1079,7 @@ class Scene {
   private shapeTopPoly(s: Shape, proj: Projector): Pt[] {
     const top = s.kind === "text" ? elevationOf(s) : elevationOf(s) + H_PED;
     const out: Pt[] = [];
-    if (s.kind === "circle" || s.kind === "icon") {
+    if (isRoundFootprint(s)) {
       const cx = s.x + s.w / 2;
       const cy = s.y + s.h / 2;
       const r = Math.min(s.w, s.h) / 2;

@@ -2,6 +2,7 @@ import type { Graphics } from "pixi.js";
 import {
   boundaryPoint,
   buildEdgeSiblingIndex,
+  isRoundFootprint,
   type Pt,
   quadPoints,
   resolveEdgeGeometry,
@@ -1396,12 +1397,12 @@ export class Controller {
       const s = doc.board.shapes[id];
       if (!s) continue;
       if (!isShapeInViewport(s, proj, viewport)) continue;
-      // circle/icon get a ring around the raised disc; rect/image a box around the
+      // round footprints get a ring around the raised disc; slabs a box around the
       // raised slab; text a box on the ground. Everything rides the shape's layer
       // elevation so the outline stays glued to a lifted token.
       const elev = this.outlineElevation(s); // handles ride this exact plane too
       let pts: Pt[];
-      if (s.kind === "circle" || s.kind === "icon") {
+      if (isRoundFootprint(s)) {
         // the disc is a circle of radius min(w,h)/2, so ring that exact circle
         // (padded) rather than the w×h bounding ellipse — keeps the outline
         // hugging the disc instead of ballooning into an oval.

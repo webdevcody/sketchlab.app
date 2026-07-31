@@ -1,6 +1,6 @@
 import { Container, Mesh, MeshGeometry, Texture } from "pixi.js";
 import type { Shape } from "../state/types";
-import { hexToNumber, NO_FILL } from "./geometry";
+import { hexToNumber, isRoundFootprint, NO_FILL } from "./geometry";
 import { type Projector, projectBoard } from "./projection";
 import { elevationOf, H_PED, shade, tint } from "./shading";
 
@@ -210,11 +210,8 @@ export class PedestalBatch {
     sorted.sort((a, b) => b.depth - a.depth);
 
     for (const { shape, alpha } of sorted) {
-      if (shape.kind === "circle") {
-        this.addCircle(groups, shape, proj, alpha);
-      } else if (shape.kind === "rect") {
-        this.addRect(groups, shape, proj, alpha);
-      }
+      if (isRoundFootprint(shape)) this.addCircle(groups, shape, proj, alpha);
+      else this.addRect(groups, shape, proj, alpha);
     }
 
     const ordered = this.orderedGroups;

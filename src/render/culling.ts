@@ -1,4 +1,5 @@
 import type { Shape } from "../state/types";
+import { isRoundFootprint } from "./geometry";
 import { elevationOf, H_PED } from "./shading";
 import { type Projector, projectBoard, unprojectBoardAt } from "./projection";
 import type { ShapeBounds } from "./shapeSpatialIndex";
@@ -38,7 +39,7 @@ export function isShapeInViewport(
   const rx = shape.w / 2;
   const ry = shape.h / 2;
   const points: Array<[number, number]> =
-    shape.kind === "circle" || shape.kind === "icon"
+    isRoundFootprint(shape)
       ? [
           [cx - rx, cy],
           [cx + rx, cy],
