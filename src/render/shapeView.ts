@@ -9,7 +9,7 @@ import {
 } from "pixi.js";
 import type { Shape, ShapeKind } from "../state/types";
 import { CODE_THEME_DEFAULT, highlightCode } from "./codeHighlight";
-import { hexToNumber, NO_FILL, readableText } from "./geometry";
+import { hexToNumber, isRoundFootprint, NO_FILL, readableText } from "./geometry";
 import { drawIcon } from "./icons";
 import {
   ICON_LABEL_FONT_SIZE,
@@ -289,10 +289,10 @@ function drawSlab(g: Graphics, s: Shape, proj: Projector): void {
   }
 }
 
-/** Faux-3D pedestal: a disc for circle/icon, a rectangular slab for rect/image/code. */
+/** Faux-3D pedestal: a disc or a rectangular slab, per the shape's footprint. */
 function drawPedestal(g: Graphics, s: Shape, proj: Projector): void {
-  if (s.kind === "rect" || s.kind === "image" || s.kind === "code") drawSlab(g, s, proj);
-  else drawDisc(g, s, proj);
+  if (isRoundFootprint(s)) drawDisc(g, s, proj);
+  else drawSlab(g, s, proj);
 }
 
 let measureCtx: CanvasRenderingContext2D | null = null;

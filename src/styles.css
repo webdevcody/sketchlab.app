@@ -662,6 +662,41 @@ button {
   box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
 }
 
+.shape-picker {
+  display: inline-flex;
+  gap: 3px;
+}
+.shape-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 26px;
+  padding: 0;
+  color: var(--muted);
+  background: var(--panel-solid);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  cursor: pointer;
+}
+.shape-btn svg {
+  width: 15px;
+  height: 15px;
+}
+.shape-btn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.shape-btn.is-active {
+  color: var(--text);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.25);
+}
+.shape-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* preset-color popover */
 .swatch-pop {
   position: absolute;
@@ -1771,6 +1806,11 @@ button {
     min-width: 28px;
     height: 28px;
     padding: 0 6px;
+  }
+
+  .shape-btn {
+    width: 28px;
+    height: 28px;
   }
 
   .icon-palette {

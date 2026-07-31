@@ -9,19 +9,31 @@ export function center(s: Shape): Pt {
   return { x: s.x + s.w / 2, y: s.y + s.h / 2 };
 }
 
+/** True when the shape stands on a disc rather than a slab. Falls back to the
+ * kind default whenever the user hasn't picked a silhouette for it. */
+export function isRoundFootprint(s: Shape): boolean {
+  if (s.silhouette) return s.silhouette === "circle";
+  return s.kind === "circle" || s.kind === "icon";
+}
+
+/** Kinds that raise a pedestal, and so can be reshaped. Text draws no pedestal
+ * and code draws a titled panel, neither of which has a footprint to swap. */
+export function supportsSilhouette(s: Shape): boolean {
+  return s.kind === "icon" || s.kind === "circle" || s.kind === "rect" || s.kind === "image";
+}
+
 /** Point on the shape's outline along the ray from its center toward `target`. */
 export function boundaryPoint(s: Shape, target: Pt): Pt {
   const c = center(s);
   const dx = target.x - c.x;
   const dy = target.y - c.y;
   if (dx === 0 && dy === 0) return c;
-  // circle/icon render as a disc, so anchor edges to that circular rim
-  if (s.kind === "circle" || s.kind === "icon") {
+  if (isRoundFootprint(s)) {
     const r = Math.min(s.w, s.h) / 2;
     const len = Math.hypot(dx, dy) || 1;
     return { x: c.x + (dx / len) * r, y: c.y + (dy / len) * r };
   }
-  // rect / image / text / code: intersect ray with the half-extent box
+  // slab footprints: intersect the ray with the half-extent box
   const hw = s.w / 2;
   const hh = s.h / 2;
   const tx = dx !== 0 ? hw / Math.abs(dx) : Infinity;
@@ -31,7 +43,7 @@ export function boundaryPoint(s: Shape, target: Pt): Pt {
 }
 
 export function pointInShape(s: Shape, p: Pt): boolean {
-  if (s.kind === "circle") {
+  if (isRoundFootprint(s)) {
     const rx = s.w / 2;
     const ry = s.h / 2;
     const nx = (p.x - (s.x + rx)) / rx;

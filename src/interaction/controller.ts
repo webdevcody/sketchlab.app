@@ -2,9 +2,11 @@ import type { Graphics } from "pixi.js";
 import {
   boundaryPoint,
   buildEdgeSiblingIndex,
+  isRoundFootprint,
   type Pt,
   quadPoints,
   resolveEdgeGeometry,
+  supportsSilhouette,
 } from "../render/geometry";
 import {
   NAMEPLATE_BACKGROUND_CSS,
@@ -316,6 +318,22 @@ export class Controller {
       { label: "Send Backward", hint: "[", onSelect: () => actions.sendBackward(ids) },
       { label: "Send to Back", hint: "-", onSelect: () => actions.sendToBack(ids) },
     ];
+    const reshapable = ids.map((id) => doc.board.shapes[id]).filter((s) => s && supportsSilhouette(s));
+    if (reshapable.length) {
+      const rounds = reshapable.filter(isRoundFootprint).length;
+      items.push(
+        {
+          label: "Square Shape",
+          hint: rounds === 0 ? "•" : "",
+          onSelect: () => actions.setShapesSilhouette(ids, "square"),
+        },
+        {
+          label: "Round Shape",
+          hint: rounds === reshapable.length ? "•" : "",
+          onSelect: () => actions.setShapesSilhouette(ids, "circle"),
+        },
+      );
+    }
     // when the board has named floors, offer to move the selection onto each one
     const layers = doc.board.layers ?? [];
     if (layers.length > 1) {
@@ -1396,12 +1414,12 @@ export class Controller {
       const s = doc.board.shapes[id];
       if (!s) continue;
       if (!isShapeInViewport(s, proj, viewport)) continue;
-      // circle/icon get a ring around the raised disc; rect/image a box around the
+      // round footprints get a ring around the raised disc; slabs a box around the
       // raised slab; text a box on the ground. Everything rides the shape's layer
       // elevation so the outline stays glued to a lifted token.
       const elev = this.outlineElevation(s); // handles ride this exact plane too
       let pts: Pt[];
-      if (s.kind === "circle" || s.kind === "icon") {
+      if (isRoundFootprint(s)) {
         // the disc is a circle of radius min(w,h)/2, so ring that exact circle
         // (padded) rather than the w×h bounding ellipse — keeps the outline
         // hugging the disc instead of ballooning into an oval.

@@ -2,6 +2,8 @@ export type ID = string;
 
 export type ShapeKind = "rect" | "circle" | "icon" | "image" | "text" | "code";
 
+export type Silhouette = "circle" | "square";
+
 export interface Shape {
   id: ID;
   kind: ShapeKind;
@@ -19,6 +21,12 @@ export interface Shape {
   src?: string;
   /** label/text font size in world units; scales with the object on resize (defaults per kind) */
   fontSize?: number;
+  /**
+   * Pedestal footprint, chosen by the user after the shape was placed. Absent
+   * until they pick one, in which case the footprint falls back to the kind
+   * default — so boards and share links predating this field are unaffected.
+   */
+  silhouette?: Silhouette;
   /**
    * Named floor this shape sits on (0-based index into `Board.layers`). Each
    * distinct value draws as its own glowing board plane. Elevation base is
