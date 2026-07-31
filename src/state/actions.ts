@@ -1,4 +1,4 @@
-import { center, type Pt, reanchorBend } from "../render/geometry";
+import { center, type Pt, reanchorBend, supportsSilhouette } from "../render/geometry";
 import { measureTextBox } from "../render/measure";
 import { scene } from "../render/scene";
 import { STACK_STEP } from "../render/shading";
@@ -13,7 +13,7 @@ import {
   doc,
   setSelection,
 } from "./store";
-import type { Board, Edge, ID, LayerDef, Shape, ShapeKind } from "./types";
+import type { Board, Edge, ID, LayerDef, Shape, ShapeKind, Silhouette } from "./types";
 
 export const DEFAULT_SIZE = 110;
 
@@ -259,6 +259,24 @@ export function setShapesStyle(
     scene.updateNode(id);
   }
   bumpRevision();
+}
+
+/**
+ * Reshape each shape's pedestal. Kinds that raise no pedestal are skipped, so a
+ * mixed selection reshapes what it can instead of failing. Dimensions are left
+ * alone: a non-square box turned round draws a disc across its shorter side and
+ * keeps the box, so switching back restores it exactly.
+ */
+export function setShapesSilhouette(ids: Iterable<ID>, silhouette: Silhouette): void {
+  let changed = false;
+  for (const id of ids) {
+    const s = doc.board.shapes[id];
+    if (!s || !supportsSilhouette(s) || s.silhouette === silhouette) continue;
+    s.silhouette = silhouette;
+    scene.updateNode(id);
+    changed = true;
+  }
+  if (changed) bumpRevision();
 }
 
 /**

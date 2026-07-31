@@ -1,7 +1,7 @@
 import { centerOrigin, fitToContent, getZoom, isFocusOffBoard, zoomBy } from "../interaction/camera";
 import { generateDiagramWithOpenAI } from "../ai/openaiDiagram";
 import { Controller } from "../interaction/controller";
-import { NO_FILL } from "../render/geometry";
+import { isRoundFootprint, NO_FILL, supportsSilhouette } from "../render/geometry";
 import { saveNow, startAutosave, stopAutosave } from "../persistence/autosave";
 import { listBoards, saveBoard } from "../persistence/db";
 import { shareUrl } from "../persistence/share";
@@ -10,7 +10,7 @@ import * as actions from "../state/actions";
 import { $canRedo, $canUndo, disposeHistory, initHistory, redo, undo } from "../state/history";
 import { $activeLayer, $camera, $selection, $style, $tool, doc } from "../state/store";
 import { TEXT_SIZE_PRESETS } from "../state/style";
-import type { Board, ToolName } from "../state/types";
+import type { Board, Silhouette, ToolName } from "../state/types";
 import { generatedGraphToBoard } from "../state/generatedGraph";
 import { createStarterBoard } from "../state/starterBoard";
 import { emptyBoard } from "../state/store";
@@ -38,6 +38,10 @@ const ICON_CODE = svg(
 );
 const ICON_RECT = svg('<rect x="4" y="6.5" width="16" height="11" rx="2"/>');
 const ICON_CIRCLE = svg('<circle cx="12" cy="12" r="7.5"/>');
+const SILHOUETTE_OPTIONS: Array<{ value: Silhouette; label: string; icon: string }> = [
+  { value: "square", label: "Square", icon: ICON_RECT },
+  { value: "circle", label: "Round", icon: ICON_CIRCLE },
+];
 const ICON_LINE = svg('<path d="M6.5 17.5 17.5 6.5"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="6" r="2"/>');
 const ICON_ARROW = svg('<path d="M5 19 16.5 7.5"/><path d="M16.5 7.5 13.7 14.2"/><path d="M16.5 7.5 9.8 10.3"/>');
 const ICON_HAND = svg(
@@ -457,6 +461,21 @@ export async function mountEditor(
   );
   const sizePicker = h("div", { class: "size-picker" }, ...sizeButtons);
 
+  const shapeButtons = SILHOUETTE_OPTIONS.map((option) =>
+    h("button", {
+      class: "shape-btn",
+      title: `${option.label} shape`,
+      "aria-label": `${option.label} shape`,
+      "aria-pressed": "false",
+      html: option.icon,
+      onclick: () => {
+        actions.setShapesSilhouette($selection.get().shapes, option.value);
+        syncStyle();
+      },
+    }),
+  );
+  const shapePicker = h("div", { class: "shape-picker" }, ...shapeButtons);
+
   const deleteBtn = h(
     "button",
     { class: "btn btn--danger", title: "Delete selection (⌫)", onclick: () => actions.deleteSelection() },
@@ -468,6 +487,7 @@ export async function mountEditor(
     { class: "style-panel" },
     h("div", { class: "field" }, h("span", null, "Fill"), fillPicker.el),
     h("div", { class: "field" }, h("span", null, "Size"), sizePicker),
+    h("div", { class: "field" }, h("span", null, "Shape"), shapePicker),
     deleteBtn,
   );
 
@@ -485,6 +505,19 @@ export async function mountEditor(
       const active = TEXT_SIZE_PRESETS[i].size === activeSize;
       btn.classList.toggle("is-active", active);
       btn.setAttribute("aria-pressed", String(active));
+    });
+    const reshapable = [...sel.shapes]
+      .map((id) => doc.board.shapes[id])
+      .filter((shape) => shape && supportsSilhouette(shape));
+    const footprints = new Set(
+      reshapable.map((shape): Silhouette => (isRoundFootprint(shape) ? "circle" : "square")),
+    );
+    const activeSilhouette = footprints.size === 1 ? [...footprints][0] : null;
+    shapeButtons.forEach((btn, i) => {
+      const active = SILHOUETTE_OPTIONS[i].value === activeSilhouette;
+      btn.classList.toggle("is-active", active);
+      btn.setAttribute("aria-pressed", String(active));
+      btn.toggleAttribute("disabled", reshapable.length === 0);
     });
     const hasSel = sel.shapes.size > 0 || sel.edges.size > 0;
     deleteBtn.toggleAttribute("disabled", !hasSel);

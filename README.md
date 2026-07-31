@@ -76,3 +76,7 @@ Double-click empty canvas to drop a text object · double-click a shape/line to 
 its text/label · drop an image file onto the canvas to add it · drag a selected line's
 center handle to bend it · resize handles keep a locked aspect ratio (square for shapes,
 natural ratio for images).
+
+Any placed shape, icon or image can be switched between a square and a round
+pedestal after the fact — via the **Shape** control in the style panel or the
+right-click menu — without losing its artwork, label, floor or connected edges.
