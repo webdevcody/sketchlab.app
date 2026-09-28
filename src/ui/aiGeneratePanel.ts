@@ -1,25 +1,36 @@
 import {
   DEFAULT_DIAGRAM_MODEL,
+  DEFAULT_PLATFORM,
   DEFAULT_PROVIDER,
   type DiagramGenerationMode,
   type DiagramModelOption,
+  type DiagramPlatform,
   FALLBACK_MODELS,
   fetchAvailableModels,
   getDefaultModel,
+  getDefaultPlatform,
   getSessionApiKey,
   isFreeModel,
   KNOWN_PROVIDERS,
   modelProvider,
+  OPENAI_MODELS,
+  platformDisplayName,
   providerDisplayName,
   setDefaultModel,
+  setDefaultPlatform,
   setSessionApiKey,
 } from "../ai/aiDiagram";
 import { h } from "./dom";
 
 const CUSTOM_MODEL_VALUE = "__custom__";
 
+const INITIAL_MODEL_OPTIONS: DiagramModelOption[] = [
+  { id: DEFAULT_DIAGRAM_MODEL, label: DEFAULT_DIAGRAM_MODEL },
+];
+
 export interface AIGenerateRequest {
   apiKey: string;
+  platform: DiagramPlatform;
   model: string;
   prompt: string;
   mode: DiagramGenerationMode;
@@ -30,9 +41,13 @@ export class AIGeneratePanel {
   private el: HTMLDivElement | null = null;
   private form!: HTMLFormElement;
   private keyInput!: HTMLInputElement;
+  private keyLabel!: HTMLSpanElement;
+  private platformSelect!: HTMLSelectElement;
   private providerSelect!: HTMLSelectElement;
   private modelSelect!: HTMLSelectElement;
+  private providerField!: HTMLLabelElement;
   private popularRow!: HTMLDivElement;
+  private headerNote!: HTMLParagraphElement;
   private promptInput!: HTMLTextAreaElement;
   private generateBtn!: HTMLButtonElement;
   private closeBtn!: HTMLButtonElement;
@@ -43,8 +58,12 @@ export class AIGeneratePanel {
   private invalidField: HTMLInputElement | HTMLTextAreaElement | null = null;
   private mode: DiagramGenerationMode = "generate";
   private canModify = false;
+  private platform: DiagramPlatform = DEFAULT_PLATFORM;
   private model = DEFAULT_DIAGRAM_MODEL;
-  private models: DiagramModelOption[] = [{ id: DEFAULT_DIAGRAM_MODEL, label: DEFAULT_DIAGRAM_MODEL }];
+  // `models` is whatever the current platform offers; `openRouterModels` remembers the
+  // OpenRouter catalog so switching to OpenAI and back doesn't lose it.
+  private models: DiagramModelOption[] = INITIAL_MODEL_OPTIONS;
+  private openRouterModels: DiagramModelOption[] = INITIAL_MODEL_OPTIONS;
 
   constructor(
     private root: HTMLElement,
@@ -60,9 +79,10 @@ export class AIGeneratePanel {
     this.restoreFocusEl = opener ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     this.canModify = !!opts.canModify;
     this.mode = this.canModify ? "modify" : "generate";
-    this.model = getDefaultModel();
+    this.platform = getDefaultPlatform();
+    this.model = getDefaultModel(this.platform);
 
-    const savedKey = getSessionApiKey();
+    const savedKey = getSessionApiKey(this.platform);
     this.closeBtn = h("button", {
       class: "ai-panel__close",
       type: "button",
@@ -71,15 +91,22 @@ export class AIGeneratePanel {
       onclick: () => this.close(),
     }, "x");
 
+    this.keyLabel = h("span", null, "");
+
     this.keyInput = h("input", {
       class: "ai-panel__input",
       type: "password",
       value: savedKey,
-      placeholder: "sk-or-...",
       autocomplete: "off",
       spellcheck: false,
       "aria-describedby": "ai-panel-error",
     });
+
+    this.platformSelect = h("select", {
+      class: "ai-panel__input",
+      "aria-describedby": "ai-panel-error",
+      onchange: () => this.selectPlatform(this.platformSelect.value as DiagramPlatform),
+    }, h("option", { value: "openrouter" }, "OpenRouter"), h("option", { value: "openai" }, "OpenAI"));
 
     this.providerSelect = h("select", {
       class: "ai-panel__input",
@@ -95,7 +122,15 @@ export class AIGeneratePanel {
 
     this.popularRow = h("div", { class: "ai-panel__chips", role: "group", "aria-label": "Popular models" });
 
-    this.populateProviderAndModel(this.models, this.model);
+    this.providerField = h(
+      "label",
+      { class: "ai-panel__field" },
+      h("span", null, "Model provider"),
+      this.providerSelect,
+    );
+    this.headerNote = h("p", null, "");
+
+    this.applyPlatform();
     this.loadModels();
 
     this.promptInput = h(
@@ -141,21 +176,16 @@ export class AIGeneratePanel {
       h(
         "label",
         { class: "ai-panel__field" },
-        h("span", null, "OpenRouter API key"),
+        h("span", null, "Platform"),
+        this.platformSelect,
+      ),
+      h(
+        "label",
+        { class: "ai-panel__field" },
+        this.keyLabel,
         this.keyInput,
       ),
-      h(
-        "label",
-        { class: "ai-panel__field" },
-        h("span", null, "Platform"),
-        h("select", { class: "ai-panel__input", disabled: true, title: "This app only talks to OpenRouter" }, h("option", null, "OpenRouter")),
-      ),
-      h(
-        "label",
-        { class: "ai-panel__field" },
-        h("span", null, "Model provider"),
-        this.providerSelect,
-      ),
+      this.providerField,
       h(
         "label",
         { class: "ai-panel__field" },
@@ -184,7 +214,7 @@ export class AIGeneratePanel {
       h(
         "header",
         { class: "ai-panel__header" },
-        h("div", null, h("h2", null, "Generate Diagram"), h("p", null, "Your key is sent directly from this browser to OpenRouter and kept for this session only.")),
+        h("div", null, h("h2", null, "Generate Diagram"), this.headerNote),
         this.closeBtn,
       ),
       this.form,
@@ -204,12 +234,47 @@ export class AIGeneratePanel {
     requestAnimationFrame(() => (savedKey ? this.promptInput : this.keyInput).focus());
   }
 
+  // The platform drives everything under it: which key the field holds, which models are on
+  // offer, and where the key is sent. Only OpenRouter gets the provider/model picker, because
+  // OpenAI's direct API exposes a single fixed model here.
+  private applyPlatform(): void {
+    const openRouter = this.platform === "openrouter";
+    const name = platformDisplayName(this.platform);
+    this.platformSelect.value = this.platform;
+    this.keyLabel.textContent = `${name} API key`;
+    this.keyInput.placeholder = openRouter ? "sk-or-..." : "sk-...";
+    this.keyInput.value = getSessionApiKey(this.platform);
+    this.headerNote.textContent = `Your key is sent directly from this browser to ${name} and kept for this session only.`;
+    this.providerField.hidden = !openRouter;
+    this.popularRow.hidden = !openRouter;
+
+    if (openRouter) {
+      this.populateProviderAndModel(this.openRouterModels, this.model);
+    } else {
+      this.models = OPENAI_MODELS;
+      this.modelSelect.replaceChildren(
+        ...OPENAI_MODELS.map((m) => h("option", { value: m.id }, m.label)),
+      );
+      this.modelSelect.value = this.model;
+      if (this.generateBtn) this.generateBtn.textContent = this.submitLabel();
+    }
+  }
+
+  private selectPlatform(platform: DiagramPlatform): void {
+    if (platform === this.platform) return;
+    this.platform = platform;
+    setDefaultPlatform(platform);
+    this.model = getDefaultModel(platform);
+    this.applyPlatform();
+  }
+
   // Providers are just OpenRouter model-id prefixes ("openai/gpt-4o-mini" -> "openai"), grouped
   // client-side so picking a model is provider-first. The picker only lists KNOWN_PROVIDERS
   // (OpenRouter has 60+, most obscure) plus the preferred model's own provider even when it
   // isn't on that list, so a Popular/custom pick from elsewhere still shows correctly.
   private populateProviderAndModel(models: DiagramModelOption[], preferredModel: string): void {
     this.models = models;
+    this.openRouterModels = models;
     const preferredProviderRaw = modelProvider(preferredModel);
     const available = new Set(models.map((m) => modelProvider(m.id)));
     const providers = KNOWN_PROVIDERS.filter((p) => available.has(p));
@@ -269,7 +334,7 @@ export class AIGeneratePanel {
 
   private selectModel(model: string): void {
     this.model = model;
-    setDefaultModel(model);
+    setDefaultModel(this.platform, model);
     if (this.generateBtn) this.generateBtn.textContent = this.submitLabel();
     if (this.popularRow) this.buildPopularRow();
   }
@@ -307,6 +372,8 @@ export class AIGeneratePanel {
     fetchAvailableModels()
       .then((models: DiagramModelOption[]) => {
         if (!this.el) return;
+        this.openRouterModels = models;
+        if (this.platform !== "openrouter") return;
         this.populateProviderAndModel(models, requestedModel);
       })
       .catch(() => {
@@ -364,7 +431,7 @@ export class AIGeneratePanel {
     const apiKey = this.keyInput.value.trim();
     const prompt = this.promptInput.value.trim();
     if (!apiKey) {
-      this.showFieldError(this.keyInput, "Enter an OpenRouter API key.");
+      this.showFieldError(this.keyInput, `Enter an ${platformDisplayName(this.platform)} API key.`);
       this.keyInput.focus();
       return;
     }
@@ -381,8 +448,8 @@ export class AIGeneratePanel {
       return;
     }
 
-    setSessionApiKey(apiKey);
-    setDefaultModel(this.model);
+    setSessionApiKey(this.platform, apiKey);
+    setDefaultModel(this.platform, this.model);
     this.showError("");
     const controller = new AbortController();
     this.abort = controller;
@@ -390,6 +457,7 @@ export class AIGeneratePanel {
     try {
       const applied = await this.onGenerate({
         apiKey,
+        platform: this.platform,
         model: this.model,
         prompt,
         mode: this.mode,
@@ -409,6 +477,7 @@ export class AIGeneratePanel {
 
   private setLoading(loading: boolean): void {
     this.form.setAttribute("aria-busy", String(loading));
+    this.platformSelect.disabled = loading;
     this.keyInput.disabled = loading;
     this.providerSelect.disabled = loading;
     this.modelSelect.disabled = loading;
@@ -468,6 +537,7 @@ export class AIGeneratePanel {
       this.closeBtn,
       this.modeButtons.generate,
       this.modeButtons.modify,
+      this.platformSelect,
       this.keyInput,
       this.providerSelect,
       this.modelSelect,

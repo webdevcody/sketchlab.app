@@ -227,7 +227,7 @@ export async function mountEditor(
   const hasBoardContent = () =>
     Object.keys(doc.board.shapes).length > 0 || Object.keys(doc.board.edges).length > 0;
 
-  const aiPanel = new AIGeneratePanel(editor, async ({ apiKey, model, prompt, mode, signal }) => {
+  const aiPanel = new AIGeneratePanel(editor, async ({ apiKey, platform, model, prompt, mode, signal }) => {
     if (mode === "generate" && hasBoardContent()) {
       const ok = await confirmDialog({
         title: "Replace board?",
@@ -238,6 +238,7 @@ export async function mountEditor(
     }
     const graph = await generateDiagram({
       apiKey,
+      platform,
       model,
       prompt,
       mode,

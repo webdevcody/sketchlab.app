@@ -6,10 +6,9 @@ import type { Board, ShapeKind } from "../state/types";
 // remembered (see getDefaultModel/setDefaultModel) and becomes the new default from then on.
 export const DEFAULT_DIAGRAM_MODEL = "z-ai/glm-5.3-flash";
 
-const KEY_SESSION_KEY = "sketchlab:openrouter-api-key";
-const MODEL_STORAGE_KEY = "sketchlab:openrouter-model";
 const CHAT_COMPLETIONS_URL = "https://openrouter.ai/api/v1/chat/completions";
 const MODELS_URL = "https://openrouter.ai/api/v1/models";
+const RESPONSES_URL = "https://api.openai.com/v1/responses";
 const CONTEXT_MAX_NODES = 48;
 const CONTEXT_MAX_EDGES = 96;
 const CONTEXT_MAX_LAYERS = 48;
@@ -21,6 +20,41 @@ export type DiagramGenerationMode = "generate" | "modify";
 export interface DiagramModelOption {
   id: string;
   label: string;
+}
+
+// The app talks to one of two backends. OpenRouter is the default (many vendors behind a single
+// key); OpenAI's own Responses API stays available because its strict json_schema mode pins the
+// output shape better than OpenRouter's json_object does.
+export type DiagramPlatform = "openrouter" | "openai";
+
+export const DEFAULT_PLATFORM: DiagramPlatform = "openrouter";
+
+export const OPENAI_DIAGRAM_MODEL = "gpt-5.5";
+
+export const OPENAI_MODELS: DiagramModelOption[] = [
+  { id: OPENAI_DIAGRAM_MODEL, label: "GPT-5.5" },
+];
+
+// Keys and model choices are stored per platform, so switching platforms never clobbers the
+// other one's key or the model you last picked there.
+const KEY_SESSION_KEYS: Record<DiagramPlatform, string> = {
+  openrouter: "sketchlab:openrouter-api-key",
+  openai: "sketchlab:openai-api-key",
+};
+
+const MODEL_STORAGE_KEYS: Record<DiagramPlatform, string> = {
+  openrouter: "sketchlab:openrouter-model",
+  openai: "sketchlab:openai-model",
+};
+
+const PLATFORM_STORAGE_KEY = "sketchlab:diagram-platform";
+
+export function platformDisplayName(platform: DiagramPlatform): string {
+  return platform === "openai" ? "OpenAI" : "OpenRouter";
+}
+
+export function defaultModelForPlatform(platform: DiagramPlatform): string {
+  return platform === "openai" ? OPENAI_DIAGRAM_MODEL : DEFAULT_DIAGRAM_MODEL;
 }
 
 export const DEFAULT_PROVIDER = "z-ai";
@@ -149,40 +183,59 @@ export class DiagramGenerationError extends Error {
   }
 }
 
-export function getSessionApiKey(): string {
+export function getSessionApiKey(platform: DiagramPlatform): string {
   try {
-    return sessionStorage.getItem(KEY_SESSION_KEY) ?? "";
+    return sessionStorage.getItem(KEY_SESSION_KEYS[platform]) ?? "";
   } catch {
     return "";
   }
 }
 
-export function setSessionApiKey(key: string): void {
+export function setSessionApiKey(platform: DiagramPlatform, key: string): void {
   try {
     const trimmed = key.trim();
-    if (trimmed) sessionStorage.setItem(KEY_SESSION_KEY, trimmed);
-    else sessionStorage.removeItem(KEY_SESSION_KEY);
+    if (trimmed) sessionStorage.setItem(KEY_SESSION_KEYS[platform], trimmed);
+    else sessionStorage.removeItem(KEY_SESSION_KEYS[platform]);
   } catch {
     // Browsers can disable sessionStorage; generation still works for this call.
   }
 }
 
-// Unlike the API key (sessionStorage -- cleared when the tab closes), the model choice lives
-// in localStorage: picking a model IS "setting the new default" -- it persists across tabs and
-// browser restarts, with DEFAULT_DIAGRAM_MODEL only used the very first time.
-export function getDefaultModel(): string {
+// The platform choice persists the same way the model choice does: picking one IS "setting the
+// new default", so a user who prefers OpenAI's direct API keeps it across tabs and restarts.
+export function getDefaultPlatform(): DiagramPlatform {
   try {
-    return localStorage.getItem(MODEL_STORAGE_KEY) || DEFAULT_DIAGRAM_MODEL;
+    return localStorage.getItem(PLATFORM_STORAGE_KEY) === "openai" ? "openai" : DEFAULT_PLATFORM;
   } catch {
-    return DEFAULT_DIAGRAM_MODEL;
+    return DEFAULT_PLATFORM;
   }
 }
 
-export function setDefaultModel(model: string): void {
+export function setDefaultPlatform(platform: DiagramPlatform): void {
   try {
-    if (model.trim()) localStorage.setItem(MODEL_STORAGE_KEY, model.trim());
+    localStorage.setItem(PLATFORM_STORAGE_KEY, platform);
   } catch {
-    // Ignore; falls back to DEFAULT_DIAGRAM_MODEL next time.
+    // Ignore; falls back to DEFAULT_PLATFORM next time.
+  }
+}
+
+// Unlike the API key (sessionStorage -- cleared when the tab closes), the model choice lives
+// in localStorage: picking a model IS "setting the new default" -- it persists across tabs and
+// browser restarts, with the platform's default model only used the very first time.
+export function getDefaultModel(platform: DiagramPlatform): string {
+  const fallback = defaultModelForPlatform(platform);
+  try {
+    return localStorage.getItem(MODEL_STORAGE_KEYS[platform]) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+export function setDefaultModel(platform: DiagramPlatform, model: string): void {
+  try {
+    if (model.trim()) localStorage.setItem(MODEL_STORAGE_KEYS[platform], model.trim());
+  } catch {
+    // Ignore; falls back to the platform's default model next time.
   }
 }
 
@@ -342,7 +395,29 @@ function extractMessageContent(payload: unknown): string {
   throw new DiagramGenerationError("The model did not return diagram JSON");
 }
 
-async function readErrorMessage(res: Response): Promise<string> {
+// OpenAI's Responses API returns the text in `output_text` (or as text parts under `output`),
+// not in a chat-completions `choices[0].message.content`.
+function extractOutputText(payload: unknown): string {
+  const root = readRecord(payload);
+  if (typeof root.output_text === "string") return root.output_text;
+
+  const output = root.output;
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      const content = readRecord(item).content;
+      if (!Array.isArray(content)) continue;
+      for (const part of content) {
+        const text = readRecord(part).text;
+        if (typeof text === "string") return text;
+      }
+    }
+  }
+
+  throw new DiagramGenerationError("The model did not return diagram JSON");
+}
+
+async function readErrorMessage(res: Response, platform: DiagramPlatform): Promise<string> {
+  const name = platformDisplayName(platform);
   try {
     const data = readRecord(await res.json());
     const error = data.error;
@@ -353,25 +428,27 @@ async function readErrorMessage(res: Response): Promise<string> {
   } catch {
     // Fall through to status-based messaging.
   }
-  if (res.status === 401) return "OpenRouter rejected the API key.";
-  if (res.status === 402) return "OpenRouter account has no credit for this model.";
-  if (res.status === 429) return "OpenRouter rate limited the request or the key has no quota.";
-  return `OpenRouter request failed (${res.status} ${res.statusText || "error"}).`;
+  if (res.status === 401) return `${name} rejected the API key.`;
+  if (res.status === 402 && platform === "openrouter") return "OpenRouter account has no credit for this model.";
+  if (res.status === 429) return `${name} rate limited the request or the key has no quota.`;
+  return `${name} request failed (${res.status} ${res.statusText || "error"}).`;
 }
 
 export async function generateDiagram(opts: {
   apiKey: string;
+  platform?: DiagramPlatform;
   model: string;
   prompt: string;
   mode?: DiagramGenerationMode;
   currentBoard?: Board;
   signal?: AbortSignal;
 }): Promise<GeneratedGraph> {
+  const platform = opts.platform ?? DEFAULT_PLATFORM;
   const apiKey = opts.apiKey.trim();
-  const model = opts.model.trim() || DEFAULT_DIAGRAM_MODEL;
+  const model = opts.model.trim() || defaultModelForPlatform(platform);
   const prompt = opts.prompt.trim();
   const mode = opts.mode ?? "generate";
-  if (!apiKey) throw new DiagramGenerationError("Enter an OpenRouter API key.");
+  if (!apiKey) throw new DiagramGenerationError(`Enter an ${platformDisplayName(platform)} API key.`);
   if (!prompt) throw new DiagramGenerationError(
     mode === "modify" ? "Describe how to modify the diagram." : "Describe the diagram you want to generate.",
   );
@@ -379,34 +456,58 @@ export async function generateDiagram(opts: {
     throw new DiagramGenerationError("There is no current diagram to modify.");
   }
 
+  const input = promptContext(prompt, mode, opts.currentBoard);
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${apiKey}`,
+  };
+  let body: unknown;
+  if (platform === "openai") {
+    body = {
+      model,
+      input,
+      max_output_tokens: 4096,
+      text: {
+        format: {
+          type: "json_schema",
+          name: "sketch_lab_generated_graph",
+          strict: true,
+          schema: GENERATED_GRAPH_SCHEMA,
+        },
+      },
+    };
+  } else {
+    headers["HTTP-Referer"] = "https://sketch-lab.carvisgsi.xyz";
+    headers["X-Title"] = "Sketch Lab";
+    body = {
+      model,
+      messages: [{ role: "user", content: input }],
+      max_tokens: 4096,
+      response_format: { type: "json_object" },
+    };
+  }
+
   let res: Response;
   try {
-    res = await fetch(CHAT_COMPLETIONS_URL, {
+    res = await fetch(platform === "openai" ? RESPONSES_URL : CHAT_COMPLETIONS_URL, {
       method: "POST",
       signal: opts.signal,
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "HTTP-Referer": "https://sketch-lab.carvisgsi.xyz",
-        "X-Title": "Sketch Lab",
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: "user", content: promptContext(prompt, mode, opts.currentBoard) }],
-        max_tokens: 4096,
-        response_format: { type: "json_object" },
-      }),
+      headers,
+      body: JSON.stringify(body),
     });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new DiagramGenerationError("Generation was cancelled.");
     }
-    throw new DiagramGenerationError("Could not reach OpenRouter. Check your connection and key.");
+    throw new DiagramGenerationError(`Could not reach ${platformDisplayName(platform)}. Check your connection and key.`);
   }
 
-  if (!res.ok) throw new DiagramGenerationError(await readErrorMessage(res), res.status);
+  if (!res.ok) throw new DiagramGenerationError(await readErrorMessage(res, platform), res.status);
 
-  const parsed = extractJsonObject(extractMessageContent(await res.json()));
+  const payload = await res.json();
+  const parsed = extractJsonObject(
+    platform === "openai" ? extractOutputText(payload) : extractMessageContent(payload),
+  );
 
   try {
     return parseGeneratedGraph(parsed);
