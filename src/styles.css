@@ -910,6 +910,10 @@ button {
   color: var(--muted);
   font-size: 12.5px;
 }
+/* display:grid above would otherwise beat the UA rule for the hidden attribute. */
+.ai-panel__field[hidden] {
+  display: none;
+}
 .ai-panel__input,
 .ai-panel__textarea {
   width: 100%;
@@ -938,6 +942,52 @@ button {
 .ai-panel__input:disabled,
 .ai-panel__textarea:disabled {
   opacity: 0.65;
+}
+.ai-panel__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 7px;
+}
+.ai-panel__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-2);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ai-panel__chip:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.ai-panel__chip.is-active {
+  color: var(--accent);
+  border-color: rgba(56, 189, 248, 0.45);
+  background: rgba(56, 189, 248, 0.14);
+}
+.ai-panel__chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ai-panel__chip--free {
+  border-color: rgba(74, 222, 128, 0.4);
+}
+.ai-panel__chip-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.18);
+  color: #4ade80;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
 }
 .ai-panel__error {
   display: none;
